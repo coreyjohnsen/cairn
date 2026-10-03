@@ -4,6 +4,7 @@ import type { ApprovalRequest } from '@shared/types'
 import { ApprovalDock } from '@/components/ApprovalDock'
 import { ChatSettingsModal } from '@/components/ChatSettingsModal'
 import { Composer } from '@/components/Composer'
+import { ContextMeter } from '@/components/ContextMeter'
 import { ConversationPanel } from '@/components/ConversationPanel'
 import { MessageList } from '@/components/MessageList'
 import { Ridgeline } from '@/components/Ridgeline'
@@ -68,6 +69,7 @@ function EmptyChat() {
 
 function ChatHeader({ onSettings }: { onSettings: () => void }) {
   const conv = useChat((s) => (s.activeId ? s.cache[s.activeId] : undefined))
+  const running = useChat((s) => (s.activeId ? !!s.running[s.activeId] : false))
   const patch = useChat((s) => s.patch)
   const remove = useChat((s) => s.remove)
   const toast = useApp((s) => s.toast)
@@ -116,6 +118,7 @@ function ChatHeader({ onSettings }: { onSettings: () => void }) {
         </h2>
       )}
       <span className="grow" />
+      {conv && <ContextMeter conv={conv} running={running} />}
       <IconButton label="Chat settings" onClick={onSettings}>
         <SlidersHorizontal size={17} />
       </IconButton>

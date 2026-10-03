@@ -260,6 +260,17 @@ function Runtime() {
       <Field row label="Flash attention" hint="Faster and lighter on memory for most models.">
         <Segmented value={local.flashAttn} onChange={(v) => set({ flashAttn: v })} options={[{ value: 'auto', label: 'Auto' }, { value: 'on', label: 'On' }, { value: 'off', label: 'Off' }]} />
       </Field>
+      <Field row label="Memory precision" hint="How the model's working memory is stored. 8-bit takes about half the video memory of full precision with almost no loss, so a context twice as long fits: on a 16 GB card, 16,384 becomes 32,768. Needs flash attention (not Off).">
+        <Select
+          value={local.kvCache ?? 'f16'}
+          onChange={(v) => set({ kvCache: v })}
+          options={[
+            { value: 'f16', label: 'Full (16-bit)' },
+            { value: 'q8_0', label: '8-bit: half the memory' },
+            { value: 'q4_0', label: '4-bit: a quarter, some loss' }
+          ]}
+        />
+      </Field>
       <Field row label="CPU threads" hint="0 lets the engine decide.">
         <NumberField value={local.threads} min={0} max={256} onCommit={(v) => set({ threads: v })} />
       </Field>

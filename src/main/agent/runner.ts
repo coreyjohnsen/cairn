@@ -364,7 +364,10 @@ export class ChatRunner {
       let history = historyNow()
       // Past the threshold: fold the older messages into a summary instead of letting them be dropped.
       if (autoCompact && totalTokens(history) * scale > budget * trigger) {
-        if (await this.compact(run, conv, resolved, compactArgs(0.3))) history = historyNow()
+        // A small tail leaves room for several more steps before the next summary is needed.
+        if (await this.compact(run, conv, resolved, compactArgs(0.22))) history = historyNow()
+        // Still over the limit (one very large result, say): summarize harder rather than let the oldest turns be dropped.
+        if (!signal.aborted && totalTokens(history) * scale > budget && (await this.compact(run, conv, resolved, compactArgs(0.1)))) history = historyNow()
         if (signal.aborted) return
       }
       history = fitHistory(history, budget ? budget / scale : 0)
@@ -581,6 +584,8 @@ export class ChatRunner {
     } catch (e) {
       if (o.signal.aborted || isAbortError(e)) throw e
       narrative = null
+    } finally {
+      this.d.emit({ type: 'status', runId: run.runId, conversationId: conv.id, status: '' })
     }
 
     const next: Compaction = {

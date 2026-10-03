@@ -12,6 +12,7 @@ import type {
   ApprovalRequest,
   ChatEvent,
   ChatMessage,
+  Compaction,
   Conversation,
   ConversationSummary,
   DownloadItem,
@@ -137,6 +138,26 @@ const settings: Settings = (() => {
 const demoAssistant = (id: string, parts: Partial<ChatMessage>): ChatMessage => ({ id, role: 'assistant', createdAt: now - 12 * MIN, content: '', status: 'done', model: 'Qwen3-8B-Q4_K_M', ...parts })
 
 const conversations = new Map<string, Conversation>()
+
+const DEMO_COMPACTION: Compaction = {
+  narrative:
+    'Goal: Port the parser module from JavaScript to TypeScript, keeping the existing tests passing and not changing public behaviour.\nDone: Converted src/lexer.js and src/tokens.js to .ts with explicit types and created src/types.ts (Token and AstNode interfaces).\nLearned: src/parser.js builds nodes through a shared helper node(type, props); tests/parser.test.js imports from ../src/parser.js, so import paths must change last. The first npm test failed with TS2345 in src/lexer.ts line 88 (char typed as string | undefined).\nNext: fix that type, convert src/parser.js, update the test imports, run npm test and npm run build.',
+  asks: ["Port the parser module to TypeScript and keep the tests green. Don't touch the CLI entry point yet."],
+  ledger: [
+    { k: 'read', t: 'src/lexer.js', n: 1 },
+    { k: 'read', t: 'src/tokens.js', n: 1 },
+    { k: 'wrote', t: 'src/types.ts', n: 1, note: 'written' },
+    { k: 'cmd', t: 'npm test', n: 1, note: 'exit 1' }
+  ],
+  upToMessageId: 'pt4',
+  messages: 8,
+  toolCalls: 4,
+  tokensBefore: 9_400,
+  tokensAfter: 2_100,
+  createdAt: now - 22 * MIN,
+  source: 'model',
+  rounds: 1
+}
 function seedConversations(): void {
   if (emptyScenario) return
   const mk = (id: string, title: string, ago: number, extra: Partial<Conversation> = {}): Conversation => ({
@@ -153,6 +174,7 @@ function seedConversations(): void {
     'c_demo0',
     mk('c_demo0', 'Tidy the trail-notes repo', 14 * MIN, {
       workspace: '/home/corey/projects/alpine-notes',
+      contextUsage: { used: 3_120, window: 16_384, at: now - 14 * MIN },
       messages: [
         { id: 'm0', role: 'user', createdAt: now - 16 * MIN, content: 'The README is out of date and the sort script has a bug with accented names. Can you fix both?' },
         demoAssistant('m1', {
@@ -198,6 +220,33 @@ function seedConversations(): void {
           content:
             'The naive version recomputes values, so its cost follows $T(n) = T(n-1) + T(n-2) + 1$, which grows like $O(2^n)$. Memoization stores each result once.\n\nThe closed form is\n\n$$F_n = \\frac{\\varphi^n - \\psi^n}{\\sqrt{5}}$$\n\nand with \\( \\varphi = \\frac{1+\\sqrt{5}}{2} \\) it also says why 10 values cost about $5 less than 20 of them in the demo.\n\n### Summary Table: Comparison\n\n| Feature | Naive Recursion | Memoization (Top-Down) | Tabulation (Bottom-Up) |\n|---|---|---|---|\n| Strategy | Solve subproblems repeatedly | Solve subproblems as needed; save result | Solve all subproblems in order |\n| Efficiency | Very Slow ($O(2^n)$) | Fast ($O(n)$) | Fast ($O(n)$) |\n| Memory | Stack space | Table + Stack space | Table only |\n| Analogy | Re-reading a book every time you need a fact. | Reading a book and taking notes so you don\'t have to re-read. | Reading a book page by page and summarizing as you go. |\n'
         })
+      ]
+    })
+  )
+  const tc = (id: string, name: string, args: object) => ({ id, name, arguments: JSON.stringify(args) })
+  const result = (id: string, callId: string, name: string, content: string, extra: Partial<ChatMessage> = {}): ChatMessage => ({ id, role: 'tool', createdAt: now - 20 * MIN, toolCallId: callId, toolName: name, content, ...extra })
+  conversations.set(
+    'c_demo5',
+    mk('c_demo5', 'Port the parser to TypeScript', 6 * MIN, {
+      workspace: '/home/corey/projects/alpine-notes',
+      contextUsage: { used: 11_960, window: 16_384, at: now - 6 * MIN },
+      compaction: DEMO_COMPACTION,
+      messages: [
+        { id: 'p0', role: 'user', createdAt: now - 40 * MIN, content: "Port the parser module to TypeScript and keep the tests green. Don't touch the CLI entry point yet." },
+        demoAssistant('p1', { content: 'I will start with the lexer and the shared types.', toolCalls: [tc('pc1', 'read_file', { path: 'src/lexer.js' }), tc('pc2', 'read_file', { path: 'src/tokens.js' })] }),
+        result('pt1', 'pc1', 'read_file', '     1\texport function lex(src) { /* … */ }'),
+        result('pt2', 'pc2', 'read_file', '     1\texport const TOKENS = { /* … */ }'),
+        demoAssistant('p2', { content: 'Creating the shared types first.', toolCalls: [tc('pc3', 'write_file', { path: 'src/types.ts' })] }),
+        result('pt3', 'pc3', 'write_file', 'Created src/types.ts (38 lines).'),
+        demoAssistant('p3', { toolCalls: [tc('pc4', 'run_command', { command: 'npm test' })] }),
+        result('pt4', 'pc4', 'run_command', 'Exit code: 1\nFAIL tests/lexer.test.js\nTS2345: Argument of type string is not assignable…', { isError: true }),
+        demoAssistant('p4', { content: 'The failing test is in the lexer. Let me look at around line 88.', toolCalls: [tc('pc5', 'read_file', { path: 'src/lexer.ts', offset: 70, limit: 40 })] }),
+        result('pt5', 'pc5', 'read_file', '    70\t…'),
+        demoAssistant('p5', { toolCalls: [tc('pc6', 'edit_file', { path: 'src/lexer.ts', old_string: 'const ch = src[i]', new_string: 'const ch: string = src[i]' })] }),
+        result('pt6', 'pc6', 'edit_file', 'Edited src/lexer.ts (1 replacement).'),
+        demoAssistant('p6', { content: 'Fixed the type. Running the tests again.', toolCalls: [tc('pc7', 'run_command', { command: 'npm test' })] }),
+        result('pt7', 'pc7', 'run_command', 'Exit code: 0\n42 passed'),
+        demoAssistant('p7', { content: 'The lexer and token files are converted and all 42 tests pass. Next I will convert `src/parser.js`, then update the test imports.', durationMs: 7300, usage: { promptTokens: 11_700, completionTokens: 260, tokensPerSecond: 36.1 } })
       ]
     })
   )
@@ -453,6 +502,30 @@ const handlers: Handlers = {
     return { runId: 'run' }
   },
   'chat:regenerate': () => ({ runId: 'run' }),
+  'chat:compact': (id) => {
+    const c = conversations.get(id)!
+    if (c.messages.length < 4) throw new Error('There is not enough earlier conversation to summarize yet.')
+    void (async () => {
+      chatEvent({ type: 'run-start', runId: 'sum', conversationId: id })
+      chatEvent({ type: 'status', runId: 'sum', conversationId: id, status: 'Summarizing the earlier conversation to free up memory…' })
+      await sleep(1600)
+      const upTo = c.messages[Math.max(0, c.messages.length - 5)]
+      c.compaction = { ...DEMO_COMPACTION, upToMessageId: upTo.id, messages: c.messages.indexOf(upTo) + 1, createdAt: Date.now() }
+      c.contextUsage = { used: 5_200, window: c.contextUsage?.window ?? 16_384, at: Date.now() }
+      chatEvent({ type: 'status', runId: 'sum', conversationId: id, status: '' })
+      chatEvent({ type: 'compaction', conversationId: id, compaction: c.compaction })
+      chatEvent({ type: 'context', conversationId: id, usage: c.contextUsage })
+      chatEvent({ type: 'run-end', runId: 'sum', conversationId: id, outcome: 'done' })
+    })()
+  },
+  'chat:uncompact': (id) => {
+    const c = conversations.get(id) ?? null
+    if (c) {
+      c.compaction = undefined
+      chatEvent({ type: 'compaction', conversationId: id })
+    }
+    return c
+  },
   'chat:abort': (id) => aborts.get(id)?.abort(),
   'chat:approve': (id, d) => pendingApprovals.get(id)?.(d),
   'chat:active': () => [],

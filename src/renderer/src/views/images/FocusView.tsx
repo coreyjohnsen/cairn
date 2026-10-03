@@ -6,38 +6,11 @@ import { Resizer } from '@/components/Resizer'
 import { Button, IconButton, Spinner } from '@/components/ui'
 import { mediaUrl } from '@/lib/api'
 import { containBox } from '@/lib/fit'
+import { jobKey, resolveFocus } from '@/lib/focus'
 import { cx, formatDuration } from '@/lib/format'
 import { useImages } from '@/store/images'
 import { usePanel } from '@/store/layout'
 import type { ImageJob, ImageRecord } from '@shared/types'
-
-type FocusItem = { kind: 'record'; rec: ImageRecord } | { kind: 'job'; job: ImageJob }
-
-const jobKey = (id: string) => `job:${id}`
-
-/**
- * What the big view should show: the thing the person picked, or failing that the newest. A job that has finished
- * turns into its first picture by itself, so starting a picture ends with it filling the stage.
- */
-export function resolveFocus(focus: string | null, records: ImageRecord[], jobs: Record<string, ImageJob>, fallbackKey: string | undefined): FocusItem | null {
-  const tryKey = (key: string | null | undefined): FocusItem | null => {
-    if (!key) return null
-    if (key.startsWith('job:')) {
-      const job = jobs[key.slice(4)]
-      if (!job || job.status === 'cancelled') return null
-      if (job.status === 'done') {
-        // The newest picture of a batch sits first in the history, so that is the one to land on.
-        const rec = [...job.resultIds].reverse().map((id) => records.find((r) => r.id === id)).find(Boolean)
-        // The job report can arrive a moment before the picture itself.
-        return rec ? { kind: 'record', rec } : { kind: 'job', job }
-      }
-      return { kind: 'job', job }
-    }
-    const rec = records.find((r) => r.id === key)
-    return rec ? { kind: 'record', rec } : null
-  }
-  return tryKey(focus) ?? tryKey(fallbackKey)
-}
 
 /** Size of an element, kept up to date as the window or a divider moves. */
 function useBox(ref: RefObject<HTMLElement | null>): { w: number; h: number } {
@@ -255,8 +228,8 @@ export function FocusView({ liveJobs, shown }: { liveJobs: ImageJob[]; shown: Im
     setFocus(next ?? null)
   }
 
-  const latest = useRef({ move, item })
-  latest.current = { move, item }
+  const latest = useRef({ move, item, ids })
+  latest.current = { move, item, ids }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
@@ -270,12 +243,12 @@ export function FocusView({ liveJobs, shown }: { liveJobs: ImageJob[]; shown: Im
         e.preventDefault()
         latest.current.move(1)
       } else if (e.key === 'Enter' && latest.current.item?.kind === 'record') {
-        useImages.getState().view(latest.current.item.rec.id, ids)
+        useImages.getState().view(latest.current.item.rec.id, latest.current.ids)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  })
+  }, [])
 
   return (
     <div className="focus" style={{ ['--hist-w' as string]: `${width}px` }}>

@@ -661,6 +661,8 @@ export interface LocalRuntimeSettings {
   threads: number
   port: number
   flashAttn: 'auto' | 'on' | 'off'
+  /** How the model's working memory (the KV cache) is stored. 8-bit takes about half the video memory of 16-bit, so twice the context fits. Needs flash attention. */
+  kvCache: 'f16' | 'q8_0' | 'q4_0'
   extraArgs: string
   /** Stop the server after this many idle minutes (0 = never). */
   idleUnloadMinutes: number

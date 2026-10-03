@@ -62,6 +62,9 @@ export function buildLlamaArgs(
   if (settings.flashAttn !== 'auto') args.push('-fa', settings.flashAttn)
   if (mmproj) args.push('--mmproj', mmproj)
   const extra = splitArgs(settings.extraArgs)
+  // A smaller KV cache lets a longer context fit. Its V half needs flash attention, so that is left alone when attention is forced off.
+  const kv = settings.kvCache ?? 'f16'
+  if (kv !== 'f16' && settings.flashAttn !== 'off' && !extra.some((a) => /^(--cache-type-[kv]|-ctk|-ctv)$/.test(a))) args.push('--cache-type-k', kv, '--cache-type-v', kv)
   // The user's own reasoning flags win over ours.
   if (noThink && !extra.some((a) => a.startsWith('--reasoning'))) args.push(...(noThink === '--reasoning' ? ['--reasoning', 'off'] : ['--reasoning-budget', '0']))
   args.push(...extra)
@@ -126,7 +129,7 @@ export class LlamaManager {
   private configSignature(modelPath: string, noThink: boolean): string {
     const s = this.d.getSettings()
     const bin = this.d.engines.resolveBinary('llama')
-    return JSON.stringify([modelPath, noThink, bin, s.local.contextSize, s.local.gpuLayers, s.local.threads, s.local.flashAttn, s.local.extraArgs, s.local.port, s.engines.llama.env])
+    return JSON.stringify([modelPath, noThink, bin, s.local.contextSize, s.local.gpuLayers, s.local.threads, s.local.flashAttn, s.local.kvCache, s.local.extraArgs, s.local.port, s.engines.llama.env])
   }
 
   /** Make sure `modelPath` is loaded; resolves with the server's base URL (no /v1). */

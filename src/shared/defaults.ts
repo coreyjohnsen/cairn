@@ -216,6 +216,7 @@ export function defaultSettings(modelsDir: string): Settings {
       threads: 0,
       port: 0,
       flashAttn: 'auto',
+      kvCache: 'f16',
       extraArgs: '',
       idleUnloadMinutes: 0,
       lastModelPath: '',

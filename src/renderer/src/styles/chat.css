@@ -24,6 +24,9 @@
   height: 52px;
   padding: 0 18px 0 26px;
 }
+.chat-head.list-folded {
+  padding-left: 14px;
+}
 .chat-title {
   margin: 0;
   max-width: 60%;
@@ -1212,4 +1215,153 @@
 .msg-images.n-1 .msg-image {
   height: min(400px, 52vh);
   max-width: 100%;
+}
+
+/* ───────── Model memory ───────── */
+.ctx-pill {
+  --c: var(--accent-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 10px 0 8px;
+  margin-right: 4px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  font-size: 0.78rem;
+  color: var(--fg-dim);
+  transition: border-color var(--t-fast), background var(--t-fast);
+}
+.ctx-pill:hover {
+  border-color: var(--line-strong);
+  background: var(--bg-3);
+}
+.ctx-mid {
+  --c: var(--warn);
+}
+.ctx-high {
+  --c: var(--danger);
+}
+.ctx-ring {
+  position: relative;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: conic-gradient(var(--c) var(--pct), var(--bg-4) 0);
+}
+.ctx-ring::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--bg-2);
+}
+.ctx-pill:hover .ctx-ring::after {
+  background: var(--bg-3);
+}
+.ctx-cut {
+  color: var(--accent);
+}
+.ctx-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 16px;
+}
+.ctx-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.92rem;
+}
+.ctx-bar {
+  --c: var(--accent-2);
+  position: relative;
+  height: 8px;
+  border-radius: 8px;
+  background: var(--bg-4);
+}
+.ctx-bar.ctx-mid {
+  --c: var(--warn);
+}
+.ctx-bar.ctx-high {
+  --c: var(--danger);
+}
+.ctx-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 8px;
+  background: var(--c);
+  transition: width var(--t-med);
+}
+/* Where summaries begin. */
+.ctx-bar > i {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 2px;
+  background: var(--fg-faint);
+}
+.ctx-sum {
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+}
+.ctx-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+/* Where the summary takes over from the messages above. */
+.compaction-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 2px 0;
+}
+.compaction-line {
+  flex: 1;
+  height: 1px;
+  background: var(--line-strong);
+}
+.compaction-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px dashed var(--line-strong);
+  color: var(--fg-dim);
+  font-size: 0.78rem;
+  transition: border-color var(--t-fast), color var(--t-fast);
+}
+.compaction-chip:hover {
+  border-color: var(--accent-line);
+  color: var(--fg);
+}
+.compaction-chip svg {
+  color: var(--accent);
+}
+.summary-text {
+  margin: 0;
+  max-height: min(52vh, 460px);
+  overflow: auto;
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  font-family: var(--font-ui);
+  font-size: 0.88rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

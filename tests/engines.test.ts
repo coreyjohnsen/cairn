@@ -300,6 +300,20 @@ describe('llama-server arguments', () => {
     expect(a.slice(a.indexOf('--mmproj'), a.indexOf('--mmproj') + 2)).toEqual(['--mmproj', '/m/mmproj.gguf'])
     expect(a.slice(-2)).toEqual(['--cache-type-k', 'q8_0'])
   })
+  it('stores the KV cache at lower precision when asked, so a longer context fits', () => {
+    const base = { ...local, contextSize: 32768, gpuLayers: -1, threads: 0, extraArgs: '' }
+    const a = buildLlamaArgs({ ...base, flashAttn: 'on', kvCache: 'q8_0' }, '/m/x.gguf', 1, 'vulkan', null)
+    expect(a.slice(a.indexOf('--cache-type-k'), a.indexOf('--cache-type-k') + 4)).toEqual(['--cache-type-k', 'q8_0', '--cache-type-v', 'q8_0'])
+    // Automatic flash attention is fine; the default precision adds nothing.
+    expect(buildLlamaArgs({ ...base, flashAttn: 'auto', kvCache: 'q4_0' }, '/m/x.gguf', 1, 'vulkan', null)).toContain('q4_0')
+    expect(buildLlamaArgs({ ...base, flashAttn: 'auto', kvCache: 'f16' }, '/m/x.gguf', 1, 'vulkan', null)).not.toContain('--cache-type-k')
+    // Without flash attention the V half cannot be quantized, so it is left at the default instead of failing to start.
+    expect(buildLlamaArgs({ ...base, flashAttn: 'off', kvCache: 'q8_0' }, '/m/x.gguf', 1, 'vulkan', null)).not.toContain('--cache-type-k')
+    // The user's own flags win.
+    const own = buildLlamaArgs({ ...base, flashAttn: 'on', kvCache: 'q8_0', extraArgs: '--cache-type-k q4_0' }, '/m/x.gguf', 1, 'vulkan', null)
+    expect(own.filter((x) => x === '--cache-type-k')).toHaveLength(1)
+    expect(own).not.toContain('--cache-type-v')
+  })
   it('can start with thinking off, using the flag the build has, unless the user set one', () => {
     const base = { ...local, extraArgs: '' }
     const neu = buildLlamaArgs(base, '/m/x.gguf', 1, 'cuda', null, '--reasoning')
