@@ -1,0 +1,70 @@
+appId: app.cairn.desktop
+productName: Cairn
+copyright: Copyright (c) 2026 Corey
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**/*
+  - resources/icon.png
+  - package.json
+  - '!**/*.map'
+asar: true
+compression: normal
+electronLanguages:
+  - en-US
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+# No auto-update feed: releases are distributed as plain files.
+publish: null
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Cairn
+  deleteAppDataOnUninstall: false
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
+
+linux:
+  icon: build/icons
+  syncDesktopName: true
+  category: Utility
+  synopsis: Chat with any AI model and generate images, locally or through APIs
+  description: Cairn is a mountain-themed desktop app for chatting with local and hosted AI models, running agents that can edit files, and generating images.
+  maintainer: Corey <johnsencorey@gmail.com>
+  desktop:
+    entry:
+      Name: Cairn
+      Comment: Chat with AI models and generate images
+      Categories: Utility;Graphics;
+      StartupWMClass: Cairn
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+    - target: tar.gz
+      arch: [x64]
+appImage:
+  artifactName: ${productName}-${version}-linux-x86_64.${ext}
+deb:
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0

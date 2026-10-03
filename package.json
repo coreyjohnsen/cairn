@@ -1,0 +1,63 @@
+{
+  "name": "cairn",
+  "productName": "Cairn",
+  "version": "1.0.0",
+  "description": "Cairn — a mountain-themed desktop app for chatting with any AI model, running local GPU models, and generating images.",
+  "author": "Corey <johnsencorey@gmail.com>",
+  "license": "MIT",
+  "private": true,
+  "main": "./out/main/index.js",
+  "homepage": "https://github.com/",
+  "desktopName": "cairn.desktop",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "preinstall": "node scripts/check-node.cjs",
+    "predev": "node scripts/check-node.cjs",
+    "prebuild": "node scripts/check-node.cjs",
+    "pretest": "node scripts/check-node.cjs",
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "icons": "node scripts/make-icons.mjs",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:all": "npm run build && electron-builder --win --linux",
+    "dev:web": "vite --config vite.web.config.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "katex": "^0.19.0",
+    "rehype-katex": "^7.0.1",
+    "remark-math": "^6.0.0",
+    "tar": "^7.5.22",
+    "yauzl": "^3.4.0"
+  },
+  "devDependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@types/node": "^24.9.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/yauzl": "^3.4.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "lucide-react": "^1.50.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.6",
+    "vitest": "^5.0.3",
+    "zustand": "^5.0.15"
+  }
+}
