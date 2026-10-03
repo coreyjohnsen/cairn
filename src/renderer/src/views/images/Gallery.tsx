@@ -94,6 +94,8 @@ export function Gallery() {
   const setMode = useLayout((s) => s.setHubMode)
   const toggle = useLayout((s) => s.toggle)
   const { collapsed: createFolded } = usePanel('create')
+  // Searching and filtering are about browsing; while a picture is being edited the header keeps only the view switch.
+  const editing = useImages((s) => s.form.startMode === 'edit' && !!s.form.initImageId && mode === 'focus')
   const [filter, setFilter] = useState<Filter>('all')
   const [query, setQuery] = useState('')
 
@@ -129,11 +131,15 @@ export function Gallery() {
         </div>
         <div className="grow" />
         <div className="row gallery-tools">
-          <div className="conv-search gallery-search">
-            <Search size={14} />
-            <input placeholder="Search prompts" value={query} onChange={(e) => setQuery(e.target.value)} spellCheck={false} />
-          </div>
-          <Segmented size="sm" value={filter} onChange={setFilter} options={[{ value: 'all', label: 'All' }, { value: 'favorites', label: 'Favorites' }, { value: 'chat', label: 'From chats' }]} />
+          {!editing && (
+            <>
+              <div className="conv-search gallery-search">
+                <Search size={14} />
+                <input placeholder="Search prompts" value={query} onChange={(e) => setQuery(e.target.value)} spellCheck={false} />
+              </div>
+              <Segmented size="sm" value={filter} onChange={setFilter} options={[{ value: 'all', label: 'All' }, { value: 'favorites', label: 'Favorites' }, { value: 'chat', label: 'From chats' }]} />
+            </>
+          )}
           <Segmented
             size="sm"
             value={mode}

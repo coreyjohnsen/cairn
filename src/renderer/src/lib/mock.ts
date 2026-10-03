@@ -46,7 +46,15 @@ function hash(s: string): number {
   return h >>> 0
 }
 
-export function mountainArt(seed: string, w = 512, h = 512): string {
+/** A region of a picture, as fractions of its width and height. */
+interface Region {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export function mountainArt(seed: string, w = 512, h = 512, patches: Region[] = []): string {
   const n = hash(seed)
   const hue = [12, 200, 265, 150, 30, 330][n % 6]
   const sky1 = `hsl(${hue} 45% ${18 + (n % 9)}%)`
@@ -62,7 +70,11 @@ export function mountainArt(seed: string, w = 512, h = 512): string {
     return `<path d="${d} L${w},${h} Z" fill="hsl(${(hue + 10 * i) % 360} ${40 - i * 6}% ${34 - i * 8}%)" opacity="${0.55 + i * 0.15}"/>`
   })
   const sx = (0.25 + ((n >> 3) % 50) / 100) * w
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${sky1}"/><stop offset="1" stop-color="${sky2}"/></linearGradient><radialGradient id="s"><stop offset="0" stop-color="#fff3d6" stop-opacity=".95"/><stop offset="1" stop-color="#fff3d6" stop-opacity="0"/></radialGradient></defs><rect width="${w}" height="${h}" fill="url(#g)"/><circle cx="${sx}" cy="${h * 0.34}" r="${h * 0.16}" fill="url(#s)"/>${layers.join('')}</svg>`
+  // A repainted region: something new and obvious inside the part that was painted.
+  const edit = patches.length
+    ? `<defs><linearGradient id="au" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5eead4"/><stop offset=".55" stop-color="#a78bfa"/><stop offset="1" stop-color="#f472b6"/></linearGradient><filter id="soft"><feGaussianBlur stdDeviation="${(w * 0.012).toFixed(1)}"/></filter></defs>${patches.map((patch) => `<ellipse cx="${((patch.x + patch.w / 2) * w).toFixed(1)}" cy="${((patch.y + patch.h / 2) * h).toFixed(1)}" rx="${((patch.w / 2) * w).toFixed(1)}" ry="${((patch.h / 2) * h).toFixed(1)}" fill="url(#au)" opacity=".9" filter="url(#soft)"/>`).join('')}`
+    : ''
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${sky1}"/><stop offset="1" stop-color="${sky2}"/></linearGradient><radialGradient id="s"><stop offset="0" stop-color="#fff3d6" stop-opacity=".95"/><stop offset="1" stop-color="#fff3d6" stop-opacity="0"/></radialGradient></defs><rect width="${w}" height="${h}" fill="url(#g)"/><circle cx="${sx}" cy="${h * 0.34}" r="${h * 0.16}" fill="url(#s)"/>${layers.join('')}${edit}</svg>`
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
 }
 
@@ -79,6 +91,37 @@ const PROMPTS = [
   'Moonlit peak reflected in a still tarn, stars, long exposure',
   'Prayer flags fluttering on a high pass, Himalayan sunrise, shallow depth of field'
 ]
+
+/** Which picture a result was repainted from and where, so the demo shows the change. */
+const repainted = new Map<string, { from: string; regions: Region[] }>()
+const masks = new Map<string, Uint8Array>()
+
+async function maskRegion(png: Uint8Array): Promise<Region | null> {
+  const bmp = await createImageBitmap(new Blob([png as BlobPart], { type: 'image/png' }))
+  const w = Math.min(bmp.width, 160)
+  const h = Math.max(1, Math.round((w * bmp.height) / bmp.width))
+  const c = document.createElement('canvas')
+  c.width = w
+  c.height = h
+  const g = c.getContext('2d', { willReadFrequently: true })!
+  g.drawImage(bmp, 0, 0, w, h)
+  const d = g.getImageData(0, 0, w, h).data
+  let x0 = w
+  let y0 = h
+  let x1 = 0
+  let y1 = 0
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (d[(y * w + x) * 4] > 127) {
+        x0 = Math.min(x0, x)
+        x1 = Math.max(x1, x)
+        y0 = Math.min(y0, y)
+        y1 = Math.max(y1, y)
+      }
+    }
+  }
+  return x1 < x0 ? null : { x: x0 / w, y: y0 / h, w: (x1 - x0 + 1) / w, h: (y1 - y0 + 1) / h }
+}
 
 const records: ImageRecord[] = Array.from({ length: 14 }, (_, i) => {
   const [width, height] = SIZES[i % SIZES.length]
@@ -560,14 +603,18 @@ const handlers: Handlers = {
         await sleep(step.ms)
       }
       const factor = req.upscale ? (/2x|x2/i.test(req.upscale.path) ? 2 : 4) ** (req.upscale.repeats ?? 1) : 1
-      const w = (req.width || 1024) * factor
-      const h = (req.height || 1024) * factor
+      const from = req.initImageId ? records.find((r) => r.id === req.initImageId) : undefined
+      // A repainted picture comes back the size of the original, with only the painted part changed.
+      const region = req.inpaint && from ? await maskRegion(masks.get(req.inpaint.maskId) ?? new Uint8Array()).catch(() => null) : null
+      const w = (region && from ? from.width : req.width || 1024) * factor
+      const h = (region && from ? from.height : req.height || 1024) * factor
       const upscaler = req.upscale ? req.upscale.path.split('/').pop()!.replace(/\.[^.]+$/, '') : undefined
       const made: ImageRecord[] = []
       for (let i = 0; i < (req.upscaleOf ? 1 : Math.max(1, req.count || 1)); i++) {
         const id = newId('img_')
         const rec: ImageRecord = { ...records[0], id, file: `${id}.png`, thumb: `${id}.jpg`, createdAt: Date.now() + i, prompt: req.prompt, width: w, height: h, source: 'hub', favorite: false, seed: req.upscaleOf ? req.seed : Math.floor(Math.random() * 1e9), loras: req.loras, upscaler, upscaledFrom: req.upscaleOf, initImageId: req.initImageId, strength: req.initImageId ? req.strength : undefined }
         records.unshift(rec)
+        if (region && from) repainted.set(id, { from: repainted.get(from.id)?.from ?? from.id, regions: [...(repainted.get(from.id)?.regions ?? []), region] })
         made.push(rec)
         emit('images:added', rec)
       }
@@ -587,7 +634,11 @@ const handlers: Handlers = {
   'images:reveal': () => undefined,
   'images:saveAs': () => '/home/corey/Pictures/lake.png',
   'images:toAttachment': () => null,
-  'images:setMask': () => ({ maskId: newId('mask_') }),
+  'images:setMask': (png) => {
+    const maskId = newId('mask_')
+    masks.set(maskId, png)
+    return { maskId }
+  },
   'images:import': (name) => {
     const id = newId('img_')
     const rec: ImageRecord = { ...records[0], id, file: `${id}.png`, thumb: `${id}.jpg`, createdAt: Date.now(), prompt: name, negativePrompt: '', backendId: 'import', backendName: 'Imported', model: '', seed: 0, durationMs: 0, favorite: false, imported: true, initImageId: undefined, strength: undefined, loras: undefined }
@@ -666,7 +717,9 @@ export function installMock(): void {
     const rec = records.find((r) => r.file === file || r.thumb === file)
     const aspect = rec ? rec.width / rec.height : 1
     const long = kind === 'thumb' ? 360 : 1024
-    return mountainArt(base, Math.round(aspect >= 1 ? long : long * aspect), Math.round(aspect >= 1 ? long / aspect : long))
+    const dims: [number, number] = [Math.round(aspect >= 1 ? long : long * aspect), Math.round(aspect >= 1 ? long / aspect : long)]
+    const edit = rec ? repainted.get(rec.id) : undefined
+    return edit ? mountainArt(edit.from, ...dims, edit.regions) : mountainArt(base, ...dims)
   }
   window.cairn = {
     platform: (q.get('platform') ?? 'linux') as 'linux',

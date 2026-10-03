@@ -10,6 +10,7 @@ import { jobKey, resolveFocus } from '@/lib/focus'
 import { cx, formatDuration } from '@/lib/format'
 import { useImages } from '@/store/images'
 import { usePanel } from '@/store/layout'
+import { EditStage } from './EditStage'
 import type { ImageJob, ImageRecord } from '@shared/types'
 
 /** Size of an element, kept up to date as the window or a divider moves. */
@@ -206,14 +207,18 @@ function HistoryRail({ order, jobs, records, current, onPick }: { order: string[
 export function FocusView({ liveJobs, shown }: { liveJobs: ImageJob[]; shown: ImageRecord[] }) {
   const focus = useImages((s) => s.focus)
   const setFocus = useImages((s) => s.setFocus)
+  const setForm = useImages((s) => s.setForm)
   const records = useImages((s) => s.records)
   const jobs = useImages((s) => s.jobs)
+  const editing = useImages((s) => s.form.startMode === 'edit')
+  const editBase = useImages((s) => (s.form.startMode === 'edit' && s.form.initImageId ? s.records.find((r) => r.id === s.form.initImageId) : undefined))
   const { width } = usePanel('history')
 
   const ids = shown.map((r) => r.id)
   const order = [...liveJobs.map((j) => jobKey(j.id)), ...ids]
   const item = resolveFocus(focus, records, jobs, order[0])
-  const currentKey = item ? (item.kind === 'job' ? jobKey(item.job.id) : item.rec.id) : undefined
+  // While a picture is being edited it is the one in front, whatever else is chosen.
+  const currentKey = editBase ? editBase.id : item ? (item.kind === 'job' ? jobKey(item.job.id) : item.rec.id) : undefined
 
   const byId = Object.fromEntries(records.map((r) => [r.id, r]))
   const move = (d: number) => {
@@ -228,14 +233,14 @@ export function FocusView({ liveJobs, shown }: { liveJobs: ImageJob[]; shown: Im
     setFocus(next ?? null)
   }
 
-  const latest = useRef({ move, item, ids })
-  latest.current = { move, item, ids }
+  const latest = useRef({ move, item, ids, editing: !!editBase })
+  latest.current = { move, item, ids, editing: !!editBase }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
       if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return
       if (e.ctrlKey || e.metaKey || e.altKey) return
-      if (document.querySelector('.lightbox, .mask-editor, .modal-backdrop')) return
+      if (latest.current.editing || document.querySelector('.lightbox, .modal-backdrop')) return
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
         e.preventDefault()
         latest.current.move(-1)
@@ -252,10 +257,18 @@ export function FocusView({ liveJobs, shown }: { liveJobs: ImageJob[]; shown: Im
 
   return (
     <div className="focus" style={{ ['--hist-w' as string]: `${width}px` }}>
-      {item?.kind === 'job' && <JobStage key={item.job.id} job={item.job} />}
-      {item?.kind === 'record' && <RecordStage rec={item.rec} ids={ids} onStep={move} onGone={onGone} />}
-      {!item && <div className="stage stage-none faint">Nothing to show with this filter.</div>}
-      <HistoryRail order={order} jobs={jobs} records={byId} current={currentKey} onPick={setFocus} />
+      {editBase && <EditStage base={editBase} />}
+      {!editBase && item?.kind === 'job' && <JobStage key={item.job.id} job={item.job} />}
+      {!editBase && item?.kind === 'record' && <RecordStage rec={item.rec} ids={ids} onStep={move} onGone={onGone} />}
+      {!editBase && !item && <div className="stage stage-none faint">Nothing to show with this filter.</div>}
+      <HistoryRail
+        order={order}
+        jobs={jobs}
+        records={byId}
+        current={currentKey}
+        // Picking an earlier picture while editing carries on editing from that one.
+        onPick={(key) => (editing ? !key.startsWith('job:') && setForm({ initImageId: key }) : setFocus(key))}
+      />
     </div>
   )
 }

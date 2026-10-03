@@ -1,47 +1,41 @@
-import { AlertTriangle, Dices, ImagePlus, PanelLeftClose, RotateCcw, Sparkles, Tags } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { AliasManager } from '@/components/AliasManager'
-import { LoraPicker, UpscalePicker, loraSectionShown, usableUpscalers } from '@/components/LoraPicker'
+import { AlertTriangle, Dices, ImagePlus, PanelLeftClose, RotateCcw } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { LoraPicker, UpscalePicker, loraSectionShown } from '@/components/LoraPicker'
 import { Resizer } from '@/components/Resizer'
 import { SizeControls, sizeNotes } from '@/components/SizeControls'
 import { Button, Disclosure, Field, IconButton, Notice, NumberField, Segmented, Select, Slider, Spinner, TextField } from '@/components/ui'
-import { invoke } from '@/lib/api'
-import { cx, errorText } from '@/lib/format'
-import { SAMPLERS, resolveSize } from '@/lib/imageSize'
+import { resolveFocus } from '@/lib/focus'
+import { cx } from '@/lib/format'
+import { SAMPLERS } from '@/lib/imageSize'
 import { firstPicture } from '@/lib/pictureFile'
 import { useApp } from '@/store/app'
 import { type StartMode, targetKeyOf, useImages } from '@/store/images'
 import { useLayout, usePanel } from '@/store/layout'
-import { defaultUpscaler, expandAliases } from '@shared/imagePrefs'
-import type { ImageGenRequest } from '@shared/types'
 import { PicturePicker } from './PicturePicker'
+import { PromptBox } from './PromptBox'
 import { StartFrom } from './StartFrom'
+import { useHub } from './useHub'
 
 const SCALE_NAME: Record<number, string> = { 0.75: 'small', 1.5: 'large', 2: 'huge' }
 
 export function CreatePanel() {
-  const settings = useApp((s) => s.settings)!
   const setView = useApp((s) => s.setView)
   const toast = useApp((s) => s.toast)
   const update = useApp((s) => s.update)
-  const form = useImages((s) => s.form)
   const setForm = useImages((s) => s.setForm)
   const targets = useImages((s) => s.targets)
   const loading = useImages((s) => s.targetsLoading)
   const refreshTargets = useImages((s) => s.refreshTargets)
   const refreshAssets = useImages((s) => s.refreshAssets)
-  const generate = useImages((s) => s.generate)
   const importPicture = useImages((s) => s.importPicture)
-  const openMaskEditor = useImages((s) => s.openMaskEditor)
-  const upscalers = useImages((s) => s.upscalers)
-  const records = useImages((s) => s.records)
-  const busyJobs = useImages((s) => Object.values(s.jobs).filter((j) => j.status === 'queued' || j.status === 'running').length)
   const { collapsed } = usePanel('create')
   const toggle = useLayout((s) => s.toggle)
-  const [enhancing, setEnhancing] = useState(false)
-  const [before, setBefore] = useState<string | null>(null)
-  const [aliasesOpen, setAliasesOpen] = useState(false)
+  const hubMode = useLayout((s) => s.hubMode)
+  const setHubMode = useLayout((s) => s.setHubMode)
   const [picking, setPicking] = useState(false)
+
+  const h = useHub()
+  const { form, target, ready, mode, editing, pic, init, imageOk, like, unsupportedHint, d, size0, negative, saved, stepsDefault, cfgDefault, upscaleValue, upscaleIsDefault, usable, chosenUpscaler, blocked, busyJobs } = h
 
   useEffect(() => {
     void refreshAssets()
@@ -50,25 +44,7 @@ export function CreatePanel() {
     return () => window.removeEventListener('focus', onFocus)
   }, [refreshAssets])
 
-  const def = settings.image.defaultTarget
-  const target =
-    targets.find((t) => targetKeyOf(t) === form.targetKey) ??
-    (def ? targets.find((t) => t.backendId === def.backendId && t.model === def.model && t.available) : undefined) ??
-    targets.find((t) => t.available) ??
-    targets[0]
-  const ready = !!target?.available
-
-  const mode = form.startMode
-  const pic = form.initImageId ? records.find((r) => r.id === form.initImageId) : undefined
-  const imageOk = !!target?.supportsImg2Img
-  const maskOk = imageOk && !!target?.supportsMask
-  const wantsPicture = mode !== 'text'
-  const init = wantsPicture ? pic : undefined
-  const img2img = !!init && imageOk
-  const maskUsed = img2img && mode === 'mask' && !!form.mask && maskOk
-  const unsupportedHint = target && !imageOk ? `${target.backendName} cannot start from a picture. Choose a built-in or AUTOMATIC1111 model.` : undefined
-
-  // Pictures can be dropped on the panel or pasted anywhere in the Images tab to start from them.
+  // Pictures can be dropped on the panel or pasted anywhere in the Images tab to edit them.
   const [dropping, setDropping] = useState(false)
   const startFrom = (file: File) => {
     if (!imageOk) {
@@ -91,110 +67,28 @@ export function CreatePanel() {
   }, [])
 
   const switchMode = (m: StartMode) => {
-    setForm({ startMode: m })
-    // Choosing Mask with a picture ready goes straight to painting.
-    if (m === 'mask' && pic && !form.mask) openMaskEditor(true)
+    if (m === 'text') return setForm({ startMode: 'text' })
+    setHubMode('focus')
+    if (pic) return setForm({ startMode: 'edit' })
+    // Edit the picture that is in front, if there is one; otherwise ask which.
+    const s = useImages.getState()
+    const item = resolveFocus(s.focus, s.records, s.jobs, s.records[0]?.id)
+    setForm({ startMode: 'edit', ...(item?.kind === 'record' ? { initImageId: item.rec.id } : {}) })
   }
 
-  const negative = form.negative ?? settings.image.negativePrompt
-  const d = target?.defaults
-  const like = init ? { width: init.width, height: init.height } : undefined
-  const size0 = resolveSize(form, target, like)
-
-  // Steps and guidance the user saved for this model come first, then the model's own.
-  const modelKey = target ? targetKeyOf(target) : ''
-  const saved = settings.image.modelDefaults?.[modelKey]
-  const stepsDefault = saved?.steps ?? d?.steps
-  const cfgDefault = saved?.cfg ?? d?.cfg
   const saveDefaults = () => {
     if (!target) return
     const next = { steps: Math.round(form.steps ?? stepsDefault ?? 25), cfg: form.cfg ?? cfgDefault ?? 7 }
-    update((s) => ({ image: { ...s.image, modelDefaults: { ...(s.image.modelDefaults ?? {}), [modelKey]: next } } }))
+    update((s) => ({ image: { ...s.image, modelDefaults: { ...(s.image.modelDefaults ?? {}), [targetKeyOf(target)]: next } } }))
     setForm({ steps: undefined, cfg: undefined })
     toast('ok', `Saved ${next.steps} steps and guidance ${next.cfg.toFixed(1)} as the default for ${target.label}.`)
   }
   const clearDefaults = () =>
     update((s) => {
       const rest = { ...(s.image.modelDefaults ?? {}) }
-      delete rest[modelKey]
+      if (target) delete rest[targetKeyOf(target)]
       return { image: { ...s.image, modelDefaults: rest } }
     })
-
-  // "Upscale when done" is on with realesrgan-x4plus once it is installed, unless the user switched it off.
-  const defUp = settings.image.upscaleByDefault !== false ? defaultUpscaler(upscalers) : undefined
-  const upscaleValue = form.upscale ?? (form.upscaleOff || !defUp ? undefined : { path: defUp.path, repeats: 1 })
-  const upscaleIsDefault = !form.upscale && !!upscaleValue
-  const usable = usableUpscalers(target, upscalers)
-  const chosenUpscaler = usable.find((u) => u.path === upscaleValue?.path)
-
-  // Aliases the user typed, shown as they will be sent.
-  const expanded = useMemo(() => expandAliases(form.prompt, settings.image.aliases), [form.prompt, settings.image.aliases])
-
-  // Why Generate cannot be pressed yet, in words.
-  const blocked = !form.prompt.trim()
-    ? 'Describe the picture to make it.'
-    : !ready
-      ? 'Choose an image model that is ready.'
-      : wantsPicture && !imageOk
-        ? (unsupportedHint ?? 'This model cannot start from a picture.')
-        : wantsPicture && !pic
-          ? 'Choose a starting picture, or switch to Text.'
-          : mode === 'mask' && !maskOk
-            ? 'This model cannot use a mask. Choose a built-in or AUTOMATIC1111 model.'
-            : mode === 'mask' && !form.mask
-              ? 'Paint the part to change first, or switch to Picture.'
-              : null
-
-  const submit = async () => {
-    if (!target || blocked) return
-    const prompt = form.prompt.trim()
-    const size = resolveSize(form, target, img2img ? like : undefined)
-    // A mask is sent first and the request then points at it, so the picture-sized data does not travel with the job.
-    let inpaint: ImageGenRequest['inpaint']
-    if (maskUsed && form.mask) {
-      try {
-        const { maskId } = await invoke('images:setMask', form.mask.png)
-        inpaint = { maskId, area: form.inpaintArea, feather: form.feather, padding: form.padding }
-      } catch (e) {
-        toast('error', errorText(e))
-        return
-      }
-    }
-    await generate({
-      prompt,
-      negativePrompt: target.supportsNegative && negative.trim() ? negative.trim() : undefined,
-      target: { backendId: target.backendId, model: target.model },
-      width: size.width,
-      height: size.height,
-      steps: form.steps,
-      cfgScale: form.cfg,
-      sampler: form.sampler,
-      seed: form.seed,
-      count: form.count,
-      initImageId: img2img ? form.initImageId : undefined,
-      strength: img2img ? form.strength : undefined,
-      inpaint,
-      loras: target.supportsLora && form.loras.length ? form.loras : undefined,
-      upscale: upscaleValue && (target.supportsLora || upscalers.find((u) => u.path === upscaleValue.path)?.engine === 'esrgan') ? upscaleValue : undefined
-    })
-  }
-
-  const enhance = async () => {
-    const p = form.prompt.trim()
-    if (!p) return
-    setEnhancing(true)
-    try {
-      const out = await invoke('chat:enhance', p)
-      if (out && out.trim()) {
-        setBefore(form.prompt)
-        setForm({ prompt: out.trim() })
-      }
-    } catch (e) {
-      toast('error', errorText(e))
-    } finally {
-      setEnhancing(false)
-    }
-  }
 
   // One-line summaries so a closed section still says what is set.
   const sizeWarn = sizeNotes(form, target, like).some((n) => n.level === 'warn')
@@ -203,6 +97,9 @@ export function CreatePanel() {
   const sizeSummary = `${dims} · ${shape}${SCALE_NAME[form.scale ?? 1] ? ` · ${SCALE_NAME[form.scale ?? 1]}` : ''}`
   const seedText = form.seed < 0 ? 'random seed' : `seed ${form.seed}`
   const advSummary = `${form.steps ?? stepsDefault ?? 25} steps · guidance ${(form.cfg ?? cfgDefault ?? 7).toFixed(1)} · ${seedText}`
+
+  // While a picture is edited in the big view the prompt is written under it; with the grid showing, it stays here.
+  const promptHere = !editing || hubMode === 'grid'
 
   return (
     <aside
@@ -240,48 +137,11 @@ export function CreatePanel() {
           </div>
         </div>
 
-        <Field
-          label="Prompt"
-          hint={
-            before !== null ? (
-              <button type="button" className="link-btn" onClick={() => { setForm({ prompt: before }); setBefore(null) }}>
-                Undo enhancement
-              </button>
-            ) : undefined
-          }
-        >
-          <div className="prompt-box">
-            <textarea
-              className="prompt-input"
-              rows={4}
-              value={form.prompt}
-              placeholder="A lone cabin below a snow-dusted ridge at dawn, mist in the valley…"
-              onChange={(e) => setForm({ prompt: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                  e.preventDefault()
-                  void submit()
-                }
-              }}
-              spellCheck
-            />
-            <div className="prompt-tools">
-              <Button variant="ghost" size="sm" icon={<Tags size={14} />} onClick={() => setAliasesOpen(true)} title="Words you type here that are replaced by longer text when the picture is made">
-                Aliases{(settings.image.aliases?.length ?? 0) > 0 ? ` (${settings.image.aliases!.length})` : ''}
-              </Button>
-              <Button variant="ghost" size="sm" icon={<Sparkles size={14} />} busy={enhancing} disabled={!form.prompt.trim()} onClick={() => void enhance()} title="Let your chat model rewrite the prompt with more visual detail">
-                Enhance
-              </Button>
-            </div>
-          </div>
-          {expanded.used.length > 0 && (
-            <div className="alias-preview xs" title="This is the text the picture is made from">
-              <span className="faint">Sent as ({expanded.used.join(', ')}): </span>
-              {expanded.text}
-            </div>
-          )}
-        </Field>
-        <AliasManager open={aliasesOpen} onClose={() => setAliasesOpen(false)} />
+        {promptHere && (
+          <Field label="Prompt">
+            <PromptBox rows={4} placeholder="A lone cabin below a snow-dusted ridge at dawn, mist in the valley…" onSubmit={() => void h.submit()} />
+          </Field>
+        )}
 
         <Field label="Model" hint={loading ? 'Looking…' : undefined}>
           <div className="row">
@@ -313,28 +173,15 @@ export function CreatePanel() {
           mode={mode}
           onMode={switchMode}
           imageOk={imageOk}
-          maskOk={maskOk}
           unsupportedHint={unsupportedHint}
           init={init}
-          strength={form.strength}
-          steps={form.steps ?? stepsDefault}
-          onStrength={(v) => setForm({ strength: v })}
-          mask={form.mask}
-          inpaintArea={form.inpaintArea}
-          feather={form.feather}
-          padding={form.padding}
-          onEditMask={() => openMaskEditor(true)}
-          onClearMask={() => setForm({ mask: undefined })}
-          onInpaint={(patch) => setForm(patch)}
+          gridShown={hubMode === 'grid'}
+          onShowEditor={() => setHubMode('focus')}
           onClearPicture={() => setForm({ initImageId: undefined })}
           onPick={startFrom}
           onChoose={() => setPicking(true)}
         />
-        <PicturePicker
-          open={picking}
-          onClose={() => setPicking(false)}
-          onPick={(rec) => setForm({ initImageId: rec.id, startMode: mode === 'mask' ? 'mask' : 'image' })}
-        />
+        <PicturePicker open={picking} onClose={() => setPicking(false)} onPick={(rec) => setForm({ initImageId: rec.id, startMode: 'edit' })} />
 
         <div className="disc-list">
           <Disclosure id="size" title="Size" summary={sizeSummary} badge={sizeWarn ? <AlertTriangle size={13} className="disc-warn" aria-label="Warning" /> : undefined}>
@@ -418,7 +265,7 @@ export function CreatePanel() {
           <div title="How many pictures to make at once">
             <Segmented size="sm" value={String(form.count)} onChange={(v) => setForm({ count: Number(v) })} options={['1', '2', '4', '8'].map((n) => ({ value: n, label: n }))} />
           </div>
-          <Button variant="primary" size="lg" className="create-go grow" icon={<ImagePlus size={18} />} disabled={!!blocked} onClick={() => void submit()}>
+          <Button variant="primary" size="lg" className="create-go grow" icon={<ImagePlus size={18} />} disabled={!!blocked || !ready} onClick={() => void h.submit()}>
             {busyJobs > 0 ? 'Add to queue' : 'Generate'}
           </Button>
         </div>

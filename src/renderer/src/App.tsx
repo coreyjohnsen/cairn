@@ -64,7 +64,7 @@ export function App() {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'b') return
       const v = useApp.getState().view
       if (v !== 'chat' && v !== 'images') return
-      if (document.querySelector('.mask-editor, .lightbox, .modal-backdrop')) return
+      if (document.querySelector('.lightbox, .modal-backdrop')) return
       e.preventDefault()
       useLayout.getState().toggle(v === 'chat' ? 'conversations' : 'create')
     }

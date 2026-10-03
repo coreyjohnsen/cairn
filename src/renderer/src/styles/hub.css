@@ -798,75 +798,6 @@
   overflow-wrap: anywhere;
 }
 
-/* Mask editor */
-.mask-editor {
-  position: fixed;
-  inset: 0;
-  z-index: 140;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  background: var(--bg-0);
-  animation: fade-in 140ms;
-}
-.me-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 14px;
-  /* Cancel and Done must not sit under the window buttons Windows draws in the top-right corner. */
-  padding: 10px calc(16px + var(--caption-w)) 10px 16px;
-  min-height: max(var(--topbar-h), 56px);
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--line);
-}
-.me-group {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.me-size {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 220px;
-}
-.me-viewport {
-  position: relative;
-  overflow: hidden;
-  touch-action: none;
-  user-select: none;
-  background: repeating-conic-gradient(var(--bg-1) 0% 25%, var(--bg-0) 0% 50%) 0 0 / 24px 24px;
-}
-.me-stage {
-  position: absolute;
-  left: 0;
-  top: 0;
-  transform-origin: 0 0;
-}
-.me-stage img,
-.me-stage canvas {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-.me-layer {
-  opacity: 0.55;
-  pointer-events: none;
-}
-.me-overlay {
-  pointer-events: none;
-}
-.me-hint {
-  padding: 8px 16px;
-  font-size: 0.82rem;
-  color: var(--fg-dim);
-  background: var(--bg-2);
-  border-top: 1px solid var(--line);
-}
-
 /* ───────── Collapsible sections in the create panel ───────── */
 .disc-list {
   border-radius: var(--r-md);
@@ -960,92 +891,25 @@
   border-color: var(--accent);
   background: var(--bg-3);
 }
-.start-pic {
+.start-edit {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   margin-top: 10px;
-}
-.start-stage {
-  display: grid;
-  place-items: center;
-  padding: 10px;
+  padding: 10px 12px;
   border-radius: var(--r-md);
-  background: repeating-conic-gradient(var(--bg-1) 0% 25%, var(--bg-0) 0% 50%) 0 0 / 16px 16px;
+  background: var(--bg-3);
   border: 1px solid var(--line);
 }
-.start-frame {
-  position: relative;
-  display: inline-block;
-  max-width: 100%;
-  line-height: 0;
-  border-radius: var(--r-sm);
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
-}
-.start-frame img {
-  display: block;
-  max-width: 100%;
-  max-height: 170px;
-  width: auto;
-  height: auto;
-}
-/* The painted part, tinted over the picture. White in the mask picture shows as colour. */
-.start-mask {
-  position: absolute;
-  inset: 0;
-  background: var(--accent);
-  opacity: 0.6;
-  mask-image: var(--mask);
-  mask-mode: luminance;
-  mask-size: 100% 100%;
-  -webkit-mask-image: var(--mask);
-  -webkit-mask-size: 100% 100%;
-  pointer-events: none;
-}
-.start-paint {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  line-height: 1.3;
-  color: #fff;
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-.start-paint > span {
-  display: inline-flex;
+.start-edit-line {
+  display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: rgba(8, 12, 16, 0.7);
-  backdrop-filter: blur(6px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-}
-.start-paint:hover > span {
-  background: var(--accent);
-  color: var(--accent-fg);
+  gap: 8px;
+  color: var(--fg-dim);
 }
 .start-tools {
   display: flex;
   align-items: center;
-  gap: 2px;
-  margin: -4px 0 -2px;
-}
-.start-maskbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: var(--r-sm);
-  background: var(--bg-3);
-  border: 1px solid var(--line);
-}
-.start-strength {
-  display: flex;
-  flex-direction: column;
   gap: 2px;
 }
 
@@ -1375,5 +1239,217 @@
   }
   .stage-info {
     padding: 12px 14px 14px;
+  }
+}
+
+/* ───────── Editing a picture in the big view: paint, describe, generate, see it change ───────── */
+.edit-canvas {
+  display: flex;
+  flex-direction: column;
+  /* The base style centers its contents; here the painting area fills the width. */
+  align-items: stretch;
+  place-items: stretch;
+  padding: 0;
+}
+.paint-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: repeating-conic-gradient(var(--bg-1) 0% 25%, var(--bg-0) 0% 50%) 0 0 / 24px 24px;
+}
+.paint-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+.paint-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+.paint-stage img,
+.paint-stage canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.paint-layer,
+.paint-overlay {
+  pointer-events: none;
+  transition: opacity var(--t-fast);
+}
+.me-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.edit-progress,
+.edit-compare,
+.edit-hint {
+  position: absolute;
+  z-index: 3;
+  background: color-mix(in srgb, var(--bg-1) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow);
+}
+.edit-toolbar {
+  position: relative;
+  z-index: 3;
+  flex: none;
+  align-self: center;
+  margin: 10px 12px;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  padding: 5px 10px;
+  border-radius: var(--r-lg);
+}
+.edit-size {
+  width: 170px;
+}
+.edit-size .slider input[type='range'] {
+  min-width: 0;
+}
+.edit-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--line-strong);
+}
+.edit-progress {
+  left: 0;
+  right: 0;
+  bottom: 20px;
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: min(460px, calc(100% - 40px));
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+}
+.edit-progress .imgprog {
+  flex: 1;
+}
+.edit-compare {
+  left: 12px;
+  right: 12px;
+  bottom: 18px;
+  margin: 0 auto;
+  width: fit-content;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+}
+.edit-chip {
+  padding: 5px 14px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.edit-chip:hover {
+  color: var(--fg);
+}
+.edit-chip.on {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.edit-chip.keep {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+}
+.edit-chip.keep:hover {
+  background: var(--accent-soft);
+}
+.edit-hint {
+  left: 12px;
+  right: 12px;
+  bottom: 18px;
+  margin: 0 auto;
+  width: fit-content;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  color: var(--fg-dim);
+  pointer-events: none;
+}
+.edit-bar {
+  gap: 10px;
+}
+.edit-bar .prompt-input {
+  min-height: 50px;
+}
+.edit-row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+.edit-strength {
+  flex: 0 1 260px;
+  min-width: 200px;
+}
+.edit-strength-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.edit-foot {
+  min-height: 1.2em;
+}
+.edit-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+/* Editing in a small space: icons only, and nothing laid over the picture. Last, so it wins over the rules above. */
+@container gallery (max-width: 760px) {
+  .edit-size {
+    width: 84px;
+  }
+  .edit-size .slider input[type='range'] {
+    flex: 1 1 0;
+    width: 0;
+  }
+  .edit-size .slider-val,
+  .edit-foot,
+  .edit-hint,
+  .edit-sep {
+    display: none;
+  }
+  .edit-toolbar {
+    margin: 6px 8px;
+    gap: 4px 6px;
+  }
+  .edit-toolbar .btn > span,
+  .edit-bar .prompt-tools .btn > span {
+    display: none;
+  }
+  .edit-bar .prompt-input {
+    min-height: 40px;
   }
 }

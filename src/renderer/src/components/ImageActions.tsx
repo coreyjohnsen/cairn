@@ -1,4 +1,4 @@
-import { Copy, Download, FolderOpen, Maximize2, MessageSquarePlus, MoreHorizontal, PaintBucket, RefreshCw, Star, Trash2, Wand2, ZoomIn } from 'lucide-react'
+import { Copy, Download, FolderOpen, Maximize2, MessageSquarePlus, MoreHorizontal, PaintBucket, RefreshCw, Star, Trash2, ZoomIn } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { ImageRecord, UpscalerFile } from '@shared/types'
 import { invoke } from '@/lib/api'
@@ -30,11 +30,7 @@ function useActions(rec: ImageRecord, onGone?: () => void) {
     upscalers,
     refreshAssets,
     reuse: () => reuse(rec),
-    startFrom: () => reuse(rec, { asInit: true }),
-    changePart: () => {
-      reuse(rec, { asInit: true, mask: true })
-      useImages.getState().openMaskEditor(true)
-    },
+    edit: () => reuse(rec, { asInit: true }),
     upscaleWith: (u: UpscalerFile) =>
       void generate({ prompt: rec.prompt, width: rec.width, height: rec.height, seed: rec.seed, count: 1, target: { backendId: rec.backendId, model: rec.model }, upscaleOf: rec.id, upscale: { path: u.path, repeats: 1 } }).then((id) => id && toast('ok', 'Upscaling started. The result appears in the gallery.')),
     useInChat: () =>
@@ -147,11 +143,8 @@ export function ImageActions({ rec, layout, onOpen, onGone }: Props) {
           </IconButton>
         </div>
         <div className="lb-grid">
-          <Button size="sm" icon={<Wand2 size={14} />} onClick={a.startFrom}>
-            Start from this
-          </Button>
-          <Button size="sm" icon={<PaintBucket size={14} />} onClick={a.changePart} title="Choose a part of this picture to change; the rest stays as it is">
-            Change part of it
+          <Button size="sm" icon={<PaintBucket size={14} />} onClick={a.edit} title="Paint the part of this picture to change and describe it, or redo the whole picture from it">
+            Edit picture
           </Button>
           <UpscaleMenu rec={rec} a={a} size="sm" placement="top" />
           <Button size="sm" icon={<MessageSquarePlus size={14} />} onClick={a.useInChat}>
@@ -185,11 +178,8 @@ export function ImageActions({ rec, layout, onOpen, onGone }: Props) {
       <Button variant="primary" size="sm" icon={<RefreshCw size={14} />} onClick={a.reuse} title="Put this picture's prompt and settings back in the Create panel">
         Reuse settings
       </Button>
-      <Button size="sm" icon={<Wand2 size={14} />} onClick={a.startFrom} title="Make a new picture that starts from this one">
-        Start from this
-      </Button>
-      <Button size="sm" icon={<PaintBucket size={14} />} onClick={a.changePart} title="Choose a part of this picture to change; the rest stays as it is">
-        Change part
+      <Button size="sm" icon={<PaintBucket size={14} />} onClick={a.edit} title="Paint the part of this picture to change and describe it, or redo the whole picture from it">
+        Edit picture
       </Button>
       <UpscaleMenu rec={rec} a={a} size="sm" placement="top" />
       <span className="grow" />
