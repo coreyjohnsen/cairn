@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Copy, Download, FolderOpen, MessageSquarePlus, RefreshCw, Star, Trash2, Wand2, X, ZoomIn } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Copy, Download, FolderOpen, MessageSquarePlus, PaintBucket, RefreshCw, Star, Trash2, Wand2, X, ZoomIn } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { invoke, mediaUrl } from '@/lib/api'
 import { errorText, formatDuration } from '@/lib/format'
@@ -121,6 +121,17 @@ export function Lightbox() {
           <div className="lb-grid">
             <Button size="sm" icon={<Wand2 size={14} />} onClick={() => reuse(rec, { asInit: true })}>
               Start from this
+            </Button>
+            <Button
+              size="sm"
+              icon={<PaintBucket size={14} />}
+              onClick={() => {
+                reuse(rec, { asInit: true })
+                useImages.getState().openMaskEditor(true)
+              }}
+              title="Choose a part of this picture to change; the rest stays as it is"
+            >
+              Change part of it
             </Button>
             <Popover
               placement="top"

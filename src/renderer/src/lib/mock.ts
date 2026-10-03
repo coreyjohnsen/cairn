@@ -218,8 +218,8 @@ const summary = (c: Conversation): ConversationSummary => ({
 const targets: ImageTargetOption[] = emptyScenario && onboarding
   ? []
   : [
-      { backendId: 'builtin', backendName: 'Built-in (stable-diffusion.cpp)', kind: 'builtin', model: 'sd_demo', label: 'SDXL Turbo', supportsImg2Img: true, supportsNegative: true, supportsLora: true, defaults: { width: 512, height: 512, steps: 4, cfg: 1, sampler: 'euler_a' }, arch: 'sdxl', vaeTiling: false, available: true },
-      { backendId: 'builtin', backendName: 'Built-in (stable-diffusion.cpp)', kind: 'builtin', model: 'sd_demo_15', label: 'Dreamshaper 8 (SD 1.5)', supportsImg2Img: true, supportsNegative: true, supportsLora: true, defaults: { width: 512, height: 512, steps: 25, cfg: 7, sampler: 'euler_a' }, arch: 'sd', vaeTiling: false, available: true },
+      { backendId: 'builtin', backendName: 'Built-in (stable-diffusion.cpp)', kind: 'builtin', model: 'sd_demo', label: 'SDXL Turbo', supportsImg2Img: true, supportsMask: true, supportsNegative: true, supportsLora: true, defaults: { width: 512, height: 512, steps: 4, cfg: 1, sampler: 'euler_a' }, arch: 'sdxl', vaeTiling: false, available: true },
+      { backendId: 'builtin', backendName: 'Built-in (stable-diffusion.cpp)', kind: 'builtin', model: 'sd_demo_15', label: 'Dreamshaper 8 (SD 1.5)', supportsImg2Img: true, supportsMask: true, supportsNegative: true, supportsLora: true, defaults: { width: 512, height: 512, steps: 25, cfg: 7, sampler: 'euler_a' }, arch: 'sd', vaeTiling: false, available: true },
       { backendId: 'comfy', backendName: 'ComfyUI', kind: 'comfyui', model: 'sd_xl_base_1.0.safetensors', label: 'sd_xl_base_1.0', supportsImg2Img: false, supportsNegative: true, available: false, unavailableReason: 'Cannot reach ComfyUI at http://127.0.0.1:8188. Is it running?' }
     ]
 
@@ -509,6 +509,7 @@ const handlers: Handlers = {
   'images:reveal': () => undefined,
   'images:saveAs': () => '/home/corey/Pictures/lake.png',
   'images:toAttachment': () => null,
+  'images:setMask': () => ({ maskId: newId('mask_') }),
   'images:import': (name) => {
     const id = newId('img_')
     const rec: ImageRecord = { ...records[0], id, file: `${id}.png`, thumb: `${id}.jpg`, createdAt: Date.now(), prompt: name, negativePrompt: '', backendId: 'import', backendName: 'Imported', model: '', seed: 0, durationMs: 0, favorite: false, imported: true, initImageId: undefined, strength: undefined, loras: undefined }

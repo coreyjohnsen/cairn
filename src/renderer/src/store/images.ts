@@ -27,6 +27,14 @@ export interface HubForm {
   count: number
   initImageId?: string
   strength: number
+  /** Part of the starting picture to repaint: white where it changes. Only for the picture it was painted on. */
+  mask?: { png: Uint8Array; preview: string; coverage: number }
+  /** Send only the masked part (sharper detail) or the whole picture to the engine. */
+  inpaintArea: 'masked' | 'whole'
+  /** Width of the soft edge where new meets old, in pixels of the starting picture. */
+  feather: number
+  /** Margin kept around the mask when only the masked part is sent. */
+  padding: number
   /** LoRAs to apply (built-in engine only). */
   loras: LoraSelection[]
   /** Make the finished picture bigger with this upscaler. */
@@ -35,7 +43,7 @@ export interface HubForm {
   upscaleOff?: boolean
 }
 
-export const DEFAULT_FORM: HubForm = { prompt: '', targetKey: '', ratio: 'auto', customW: 1024, customH: 1024, scale: 1, seed: -1, count: 1, strength: 0.6, loras: [] }
+export const DEFAULT_FORM: HubForm = { prompt: '', targetKey: '', ratio: 'auto', customW: 1024, customH: 1024, scale: 1, seed: -1, count: 1, strength: 0.6, inpaintArea: 'masked', feather: 12, padding: 64, loras: [] }
 
 export const targetKeyOf = (t: { backendId: string; model: string }): string => `${t.backendId}::${t.model}`
 
@@ -52,6 +60,8 @@ interface ImagesState {
   /** Opened in the lightbox, with the ids it can step through. */
   viewing: string | null
   siblings: string[]
+  /** The mask editor is open on the starting picture. */
+  maskEditorOpen: boolean
   init(): Promise<void>
   refreshTargets(force?: boolean): Promise<void>
   refreshAssets(): Promise<void>
@@ -66,6 +76,7 @@ interface ImagesState {
   remove(ids: string[]): Promise<void>
   favorite(id: string, fav: boolean): void
   view(id: string | null, siblings?: string[]): void
+  openMaskEditor(open: boolean): void
 }
 
 const byNewest = (a: ImageRecord, b: ImageRecord) => b.createdAt - a.createdAt
@@ -92,6 +103,7 @@ export const useImages = create<ImagesState>()((set, get) => ({
   form: DEFAULT_FORM,
   viewing: null,
   siblings: [],
+  maskEditorOpen: false,
 
   async init() {
     on('images:added', (r) => set((s) => ({ records: [r, ...s.records.filter((x) => x.id !== r.id)].sort(byNewest) })))
@@ -132,7 +144,8 @@ export const useImages = create<ImagesState>()((set, get) => ({
   },
 
   setForm(patch) {
-    set((s) => ({ form: { ...s.form, ...patch } }))
+    // A mask belongs to the picture it was painted on.
+    set((s) => ({ form: { ...s.form, ...patch, ...('initImageId' in patch && patch.initImageId !== s.form.initImageId && !('mask' in patch) ? { mask: undefined } : {}) } }))
   },
 
   reuse(rec, opts) {
@@ -151,7 +164,8 @@ export const useImages = create<ImagesState>()((set, get) => ({
         prompt: rec.imported ? '' : rec.prompt,
         negative: rec.negativePrompt,
         targetKey: known ? key : s.form.targetKey,
-        ratio,
+        // "Start from this" makes a new picture of the model's usual size in the picture's shape; "Reuse settings" keeps the exact size.
+        ratio: opts?.asInit ? 'auto' : ratio,
         customW: rec.width,
         customH: rec.height,
         scale: 1,
@@ -163,6 +177,7 @@ export const useImages = create<ImagesState>()((set, get) => ({
         // A picture made from another one keeps that starting picture (and how far it moved) when its settings are reused.
         initImageId: opts?.asInit ? rec.id : rec.initImageId && s.records.some((r) => r.id === rec.initImageId) ? rec.initImageId : undefined,
         strength: !opts?.asInit && rec.strength ? rec.strength : s.form.strength,
+        mask: undefined,
         loras: rec.loras ?? [],
         upscale: undefined,
         // Reusing a picture's settings should give the same kind of picture, not add the default upscale.
@@ -214,6 +229,10 @@ export const useImages = create<ImagesState>()((set, get) => ({
   favorite(id, fav) {
     set((s) => ({ records: s.records.map((r) => (r.id === id ? { ...r, favorite: fav } : r)) }))
     void invoke('images:favorite', id, fav)
+  },
+
+  openMaskEditor(open) {
+    set({ maskEditorOpen: open })
   },
 
   view(id, siblings) {

@@ -17,6 +17,7 @@ import { SdCppBackend, SdProgress, VAE_FAILED_MESSAGE, buildSdArgs, explainSdFai
 import { ImageService } from '../src/main/images/service'
 import { imageSize } from '../src/main/images/size'
 import { ImageStore } from '../src/main/images/store'
+import { type Raster, decodePng, encodePng } from '../src/main/images/pixels'
 import { BackendError, type BackendHooks, type GenParams, type ImageBackend, sniffImageExt } from '../src/main/images/types'
 import { fakeJpeg, fakePng, fakeWebpVp8x } from './helpers/png'
 
@@ -228,6 +229,9 @@ describe('sd.cpp command line', () => {
   })
 
   it('adds image-to-image arguments', () => {
+    const withMask = buildSdArgs(model, params({ strength: 0.4 }), '/o/out.png', null, '/o/init.png', '/o/mask.png')
+    expect(withMask.slice(withMask.indexOf('--mask'), withMask.indexOf('--mask') + 2)).toEqual(['--mask', '/o/mask.png'])
+    expect(buildSdArgs(model, params(), '/o/out.png', null, undefined, '/o/mask.png')).not.toContain('--mask') // a mask means nothing without a starting picture
     const a = buildSdArgs(model, params({ strength: 0.4 }), '/o/out.png', null, '/o/init.png')
     expect(a.slice(a.indexOf('-i'), a.indexOf('-i') + 4)).toEqual(['-i', '/o/init.png', '--strength', '0.4'])
   })
@@ -395,6 +399,7 @@ describe.skipIf(process.platform === 'win32')('SdCppBackend with a fake sd-cli',
   let weights: string
   let up4: string
   let nomode: string
+  let binNoMask: string
   let settings: Settings
 
   beforeAll(async () => {
@@ -409,8 +414,9 @@ describe.skipIf(process.platform === 'win32')('SdCppBackend with a fake sd-cli',
       `#!/usr/bin/env node
 const fs = require('fs'), path = require('path')
 const a = process.argv.slice(2)
-if (a.includes('--help')) { console.log('usage: sd [--vae-tiling] [--upscale-model P] [--upscale-repeats N] [--lora-model-dir D] [--offload-to-cpu] [--clip-on-cpu] [--diffusion-fa] [--steps N] [--cfg-scale N] [--strength N]'); process.exit(0) }
+if (a.includes('--help')) { console.log('usage: sd [--vae-tiling] [--upscale-model P] [--upscale-repeats N] [--lora-model-dir D] [--offload-to-cpu] [--clip-on-cpu] [--diffusion-fa] [--steps N] [--cfg-scale N] [--strength N] [--mask P]'); process.exit(0) }
 const get = (f) => (a.includes(f) ? a[a.indexOf(f) + 1] : undefined)
+for (const f of ['-i', '--mask']) { if (get(f) && !fs.existsSync(get(f))) { console.error('failed to load image ' + get(f)); process.exit(1) } }
 const prompt = get('-p'), out = get('-o'), count = Number(get('-b') || 1), steps = Number(get('--steps'))
 fs.appendFileSync(path.join(__dirname, 'calls.jsonl'), JSON.stringify(a) + '\\n')
 if (get('-M') === 'upscale') {
@@ -454,6 +460,8 @@ tick()
 `,
       { mode: 0o755 }
     )
+    binNoMask = path.join(dir, 'sd-cli-nomask')
+    await fsp.writeFile(binNoMask, (await fsp.readFile(bin, 'utf8')).replace(' [--mask P]', ''), { mode: 0o755 })
     up4 = path.join(dir, '4x.pth')
     nomode = path.join(dir, 'NOMODE.pth')
     await fsp.writeFile(up4, 'x')
@@ -466,11 +474,11 @@ tick()
   })
   beforeEach(() => clearFlagCache())
 
-  const backend = () =>
+  const backend = (binary = bin) =>
     new SdCppBackend({
       getSettings: () => settings,
       tmpDir: dir,
-      engines: { resolveBinary: () => bin, spawnEnv: () => process.env } as never
+      engines: { resolveBinary: () => binary, spawnEnv: () => process.env } as never
     })
 
   it('probes supported flags from --help', async () => {
@@ -510,6 +518,19 @@ tick()
     const lines = (await fsp.readFile(path.join(dir, 'calls.jsonl'), 'utf8')).trim().split('\n')
     return JSON.parse(lines[lines.length - 1])
   }
+
+  it('passes a starting picture with a mask to the engine as files, and refuses an engine that has no --mask', async () => {
+    await backend().generate(params({ model: 'local1', steps: 1, initImage: fakePng(64, 64), strength: 0.7, mask: fakePng(64, 64, 3) }), hooks())
+    const a = await lastCall()
+    expect(a[a.indexOf('-i') + 1]).toMatch(/init\.png$/)
+    expect(a[a.indexOf('--mask') + 1]).toMatch(/mask\.png$/)
+    expect(a[a.indexOf('--strength') + 1]).toBe('0.7')
+    const err = await backend(binNoMask).generate(params({ model: 'local1', steps: 1, initImage: fakePng(64, 64), mask: fakePng(64, 64) }), hooks()).catch((e) => e)
+    expect(err).toBeInstanceOf(BackendError)
+    expect(err.message).toMatch(/cannot use a mask.*Update/)
+    const noInit = await backend().generate(params({ model: 'local1', steps: 1, mask: fakePng(64, 64) }), hooks()).catch((e) => e)
+    expect(noInit.message).toMatch(/needs a starting picture/)
+  })
 
   it('passes LoRAs as prompt tags and tells the engine where the LoRA folder is', async () => {
     await backend().generate(params({ model: 'local1', steps: 1, prompt: 'a cat', loras: [{ id: 'pixel', strength: 0.8 }], loraDir: '/m/lora' }), hooks())
@@ -762,6 +783,15 @@ describe('AUTOMATIC1111 backend', () => {
     expect(lastBody.init_images).toHaveLength(1)
   })
 
+  it('sends a mask with the starting picture, with nothing left for A1111 to blur or crop itself', async () => {
+    await new A1111Backend(cfg('a1111', url)).generate(params({ initImage: fakePng(8, 8), strength: 0.7, mask: fakePng(8, 8, 2) }), hooks())
+    expect(lastPath).toBe('/sdapi/v1/img2img')
+    expect(typeof lastBody.mask).toBe('string')
+    expect(lastBody).toMatchObject({ mask_blur: 0, inpainting_fill: 1, inpainting_mask_invert: 0, inpaint_full_res: false, denoising_strength: 0.7 })
+    await new A1111Backend(cfg('a1111', url)).generate(params({ initImage: fakePng(8, 8) }), hooks())
+    expect(lastBody.mask).toBeUndefined()
+  })
+
   it('reports server errors and interrupts on cancel', async () => {
     await expect(new A1111Backend(cfg('a1111', url)).generate(params({ prompt: 'FAIL' }), hooks())).rejects.toThrow(/HTTP 500.*CUDA OOM/)
     const ac = new AbortController()
@@ -843,6 +873,8 @@ class MockBackend implements ImageBackend {
   supportsImg2Img = true
   supportsInpaint = true
   supportsNegative = true
+  /** Return real, decodable pictures of the size asked for (needed when a mask is blended back). */
+  real: [number, number, number] | null = null
   calls: GenParams[] = []
   gate: Promise<void> | null = null
   outSize = { w: 640, h: 480 }
@@ -872,6 +904,11 @@ class MockBackend implements ImageBackend {
       ])
     }
     h.onProgress(0.9, 'Decoding', 'decoding')
+    if (this.real) {
+      const data = new Uint8Array(p.width * p.height * 3)
+      for (let i = 0; i < data.length; i += 3) data.set(this.real, i)
+      return Array.from({ length: p.count }, (_, i) => ({ data: encodePng({ width: p.width, height: p.height, channels: 3, data }), seed: p.seed + i }))
+    }
     return Array.from({ length: p.count }, (_, i) => ({ data: fakePng(this.outSize.w, this.outSize.h, i + 1), seed: p.seed + i, warning: i === 0 ? this.warning : undefined }))
   }
 }
@@ -1218,6 +1255,96 @@ describe('ImageService', () => {
       const job = svc.submit(req({ initImageId: pic.id }))
       await waitFor(() => status(job.id) === 'error')
       expect(svc.listJobs().find((j) => j.id === job.id)!.error).toMatch(/does not support image-to-image/)
+    })
+
+    describe('with a mask', () => {
+      const W = 800
+      const H = 600
+      const solid = (w: number, h: number, c: [number, number, number]): Uint8Array => {
+        const data = new Uint8Array(w * h * 3)
+        for (let i = 0; i < data.length; i += 3) data.set(c, i)
+        return encodePng({ width: w, height: h, channels: 3, data })
+      }
+      const rectMask = (x0: number, y0: number, x1: number, y1: number, w = W, h = H): Uint8Array => {
+        const data = new Uint8Array(w * h)
+        for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) data[y * w + x] = 255
+        return encodePng({ width: w, height: h, channels: 1, data })
+      }
+      const pixel = (r: Raster, x: number, y: number) => [...r.data.subarray((y * r.width + x) * 3, (y * r.width + x) * 3 + 3)]
+      const start = () => svc.importPicture('photo.png', solid(W, H, [100, 150, 200]))
+      const result = async (jobId: string) => {
+        const rec = store.get(svc.listJobs().find((j) => j.id === jobId)!.resultIds[0]) as ImageRecord
+        return { rec, raster: decodePng((await store.readBytes(rec.id))!) }
+      }
+      beforeEach(() => {
+        be.real = [250, 10, 10]
+      })
+
+      it('repaints the masked part of the whole picture and leaves the rest exactly as it was', async () => {
+        const pic = await start()
+        const { maskId } = { maskId: svc.setMask(rectMask(300, 200, 500, 400)) }
+        const job = svc.submit(req({ initImageId: pic.id, strength: 0.8, width: 512, height: 384, inpaint: { maskId, area: 'whole', feather: 8, padding: 32 } }))
+        await waitFor(() => status(job.id) === 'done')
+        const c = be.calls[0]
+        expect(c.mask).toBeInstanceOf(Uint8Array)
+        expect(decodePng(c.initImage!)).toMatchObject({ width: 512, height: 384 })
+        expect(decodePng(c.mask!)).toMatchObject({ width: 512, height: 384 })
+        expect(c).toMatchObject({ width: 512, height: 384, strength: 0.8 })
+        const { rec, raster } = await result(job.id)
+        expect(rec).toMatchObject({ width: W, height: H, masked: true, initImageId: pic.id, strength: 0.8 })
+        expect(pixel(raster, 400, 300)).toEqual([250, 10, 10])
+        expect(pixel(raster, 20, 20)).toEqual([100, 150, 200])
+        expect(pixel(raster, 780, 580)).toEqual([100, 150, 200])
+      })
+
+      it('only the masked area: the engine gets a small crop at full size, and the result is the whole picture again', async () => {
+        const pic = await start()
+        const maskId = svc.setMask(rectMask(600, 300, 640, 340))
+        const job = svc.submit(req({ initImageId: pic.id, inpaint: { maskId, area: 'masked', feather: 8, padding: 32 } }))
+        await waitFor(() => status(job.id) === 'done')
+        const c = be.calls[0]
+        // The default size is 512 × 512; the crop is square, so that is what the engine is asked for.
+        expect(c).toMatchObject({ width: 512, height: 512 })
+        expect(decodePng(c.initImage!)).toMatchObject({ width: 512, height: 512 })
+        const { rec, raster } = await result(job.id)
+        expect(rec).toMatchObject({ width: W, height: H, masked: true })
+        expect(pixel(raster, 620, 320)).toEqual([250, 10, 10])
+        expect(pixel(raster, 50, 50)).toEqual([100, 150, 200])
+      })
+
+      it('says what is wrong with the mask, the picture or the engine', async () => {
+        const pic = await start()
+        const run = async (r: Partial<ImageGenRequest>) => {
+          const job = svc.submit(req(r))
+          await waitFor(() => status(job.id) === 'error')
+          return svc.listJobs().find((j) => j.id === job.id)!.error
+        }
+        const maskId = svc.setMask(rectMask(10, 10, 60, 60))
+        expect(await run({ initImageId: pic.id, inpaint: { maskId: 'mask_gone', area: 'masked', feather: 8, padding: 32 } })).toMatch(/no longer available/)
+        expect(await run({ inpaint: { maskId, area: 'masked', feather: 8, padding: 32 } })).toMatch(/needs a starting picture/)
+        const empty = svc.setMask(rectMask(0, 0, 0, 0))
+        expect(await run({ initImageId: pic.id, inpaint: { maskId: empty, area: 'masked', feather: 8, padding: 32 } })).toMatch(/mask is empty/)
+        be.supportsInpaint = false
+        expect(await run({ initImageId: pic.id, inpaint: { maskId, area: 'masked', feather: 8, padding: 32 } })).toMatch(/cannot use a mask/)
+        expect(be.calls).toHaveLength(0)
+      })
+
+      it('only accepts a PNG mask of a usable size, and keeps only the latest few', () => {
+        expect(() => svc.setMask(new Uint8Array(0))).toThrow(/empty/)
+        expect(() => svc.setMask(new Uint8Array(100).fill(7))).toThrow(/PNG/)
+        expect(() => svc.setMask(rectMask(0, 0, 1, 1, 4, 4))).toThrow(/not usable/)
+        const first = svc.setMask(rectMask(1, 1, 5, 5, 20, 20))
+        for (let i = 0; i < 16; i++) svc.setMask(rectMask(1, 1, 5, 5, 20, 20))
+        const job = svc.submit(req({ initImageId: 'img_missing', inpaint: { maskId: first, area: 'masked', feather: 8, padding: 32 } }))
+        expect(job.id).toBeTruthy()
+      })
+
+      it('lists which models can use a mask', async () => {
+        const t = await svc.targets(true)
+        expect(t[0].supportsMask).toBe(true)
+        be.supportsInpaint = false
+        expect((await svc.targets(true))[0].supportsMask).toBe(false)
+      })
     })
 
     it('refuses a WebP starting picture on the built-in engine, which cannot read it', async () => {

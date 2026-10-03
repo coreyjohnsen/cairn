@@ -6,6 +6,7 @@ import { LoraPicker, UpscalePicker } from '@/components/LoraPicker'
 import { type GridItem, JustifiedGrid } from '@/components/JustifiedGrid'
 import { Ridgeline } from '@/components/Ridgeline'
 import { SizeControls } from '@/components/SizeControls'
+import { MaskEditor } from '@/components/MaskEditor'
 import { StartingImage } from '@/components/StartingImage'
 import { Button, EmptyState, Field, IconButton, Notice, NumberField, Segmented, Select, Slider, Spinner, TextField } from '@/components/ui'
 import { invoke, mediaUrl } from '@/lib/api'
@@ -15,7 +16,7 @@ import { cx, errorText } from '@/lib/format'
 import { useApp } from '@/store/app'
 import { targetKeyOf, useImages } from '@/store/images'
 import { defaultUpscaler, expandAliases } from '@shared/imagePrefs'
-import type { ImageJob, ImageRecord } from '@shared/types'
+import type { ImageGenRequest, ImageJob, ImageRecord } from '@shared/types'
 
 /* ───────────── create panel ───────────── */
 
@@ -32,6 +33,8 @@ function CreatePanel() {
   const refreshAssets = useImages((s) => s.refreshAssets)
   const generate = useImages((s) => s.generate)
   const importPicture = useImages((s) => s.importPicture)
+  const maskEditorOpen = useImages((s) => s.maskEditorOpen)
+  const openMaskEditor = useImages((s) => s.openMaskEditor)
   const upscalers = useImages((s) => s.upscalers)
   const records = useImages((s) => s.records)
   const busyJobs = useImages((s) => Object.values(s.jobs).filter((j) => j.status === 'queued' || j.status === 'running').length)
@@ -116,6 +119,21 @@ function CreatePanel() {
     const prompt = form.prompt.trim()
     if (!prompt) return
     const size = resolveSize(form, target, img2img ? like : undefined)
+    // A mask is sent first and the request then points at it, so the picture-sized data does not travel with the job.
+    let inpaint: ImageGenRequest['inpaint']
+    if (img2img && form.mask) {
+      if (!target.supportsMask) {
+        toast('error', `${target.backendName} cannot use a mask. Choose a built-in or AUTOMATIC1111 model, or remove the mask.`)
+        return
+      }
+      try {
+        const { maskId } = await invoke('images:setMask', form.mask.png)
+        inpaint = { maskId, area: form.inpaintArea, feather: form.feather, padding: form.padding }
+      } catch (e) {
+        toast('error', errorText(e))
+        return
+      }
+    }
     await generate({
       prompt,
       negativePrompt: target.supportsNegative && negative.trim() ? negative.trim() : undefined,
@@ -129,6 +147,7 @@ function CreatePanel() {
       count: form.count,
       initImageId: img2img ? form.initImageId : undefined,
       strength: img2img ? form.strength : undefined,
+      inpaint,
       loras: target.supportsLora && form.loras.length ? form.loras : undefined,
       upscale: upscaleValue && (target.supportsLora || upscalers.find((u) => u.path === upscaleValue.path)?.engine === 'esrgan') ? upscaleValue : undefined
     })
@@ -272,6 +291,14 @@ function CreatePanel() {
           strength={form.strength}
           steps={form.steps ?? stepsDefault}
           onStrength={(v) => setForm({ strength: v })}
+          maskSupported={!!target?.supportsMask}
+          mask={form.mask}
+          inpaintArea={form.inpaintArea}
+          feather={form.feather}
+          padding={form.padding}
+          onEditMask={() => openMaskEditor(true)}
+          onClearMask={() => setForm({ mask: undefined })}
+          onInpaint={(patch) => setForm(patch)}
           onClear={() => setForm({ initImageId: undefined })}
           onPick={startFrom}
         />
@@ -332,6 +359,17 @@ function CreatePanel() {
           Ctrl+Enter to generate
         </div>
       </div>
+      {maskEditorOpen && init && (
+        <MaskEditor
+          picture={init}
+          initial={form.mask?.png}
+          onCancel={() => openMaskEditor(false)}
+          onDone={(m) => {
+            setForm({ mask: m })
+            openMaskEditor(false)
+          }}
+        />
+      )}
     </aside>
   )
 }

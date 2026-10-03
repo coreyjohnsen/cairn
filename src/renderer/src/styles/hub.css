@@ -836,3 +836,99 @@
   outline: 2px dashed var(--accent);
   outline-offset: -6px;
 }
+
+/* Mask editor */
+.mask-editor {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: var(--bg-0);
+  animation: fade-in 140ms;
+}
+.me-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 10px 16px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+}
+.me-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.me-size {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+}
+.me-viewport {
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  background: repeating-conic-gradient(var(--bg-1) 0% 25%, var(--bg-0) 0% 50%) 0 0 / 24px 24px;
+}
+.me-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+.me-stage img,
+.me-stage canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.me-layer {
+  opacity: 0.55;
+  pointer-events: none;
+}
+.me-overlay {
+  pointer-events: none;
+}
+.me-hint {
+  padding: 8px 16px;
+  font-size: 0.82rem;
+  color: var(--fg-dim);
+  background: var(--bg-2);
+  border-top: 1px solid var(--line);
+}
+
+/* Mask controls under the starting image */
+.mask-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.mask-card {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: var(--r-md);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+}
+.mask-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mask-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  border-radius: var(--r-sm);
+  background: #000;
+  border: 1px solid var(--line);
+}
