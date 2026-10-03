@@ -31,7 +31,8 @@ import { ridgeHeights } from '@/components/Ridgeline'
 type Handlers = { [K in InvokeChannel]?: (...args: IpcInvokeMap[K]['args']) => IpcInvokeMap[K]['result'] | Promise<IpcInvokeMap[K]['result']> }
 
 const q = new URLSearchParams(location.search)
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+// ?fast makes the scripted image jobs finish in about a second.
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, q.has('fast') ? Math.min(ms, 120) : ms))
 const now = Date.now()
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -485,15 +486,19 @@ const handlers: Handlers = {
         emit('images:job', { ...job, progress: step.fraction, label: step.label, stage: step.stage })
         await sleep(step.ms)
       }
-      const id = newId('img_')
       const factor = req.upscale ? (/2x|x2/i.test(req.upscale.path) ? 2 : 4) ** (req.upscale.repeats ?? 1) : 1
       const w = (req.width || 1024) * factor
       const h = (req.height || 1024) * factor
       const upscaler = req.upscale ? req.upscale.path.split('/').pop()!.replace(/\.[^.]+$/, '') : undefined
-      const rec: ImageRecord = { ...records[0], id, file: `${id}.png`, thumb: `${id}.jpg`, createdAt: Date.now(), prompt: req.prompt, width: w, height: h, source: 'hub', favorite: false, seed: req.upscaleOf ? req.seed : Math.floor(Math.random() * 1e9), loras: req.loras, upscaler, upscaledFrom: req.upscaleOf }
-      records.unshift(rec)
-      emit('images:added', rec)
-      emit('images:job', { ...job, status: 'done', progress: 1, resultIds: [id] })
+      const made: ImageRecord[] = []
+      for (let i = 0; i < (req.upscaleOf ? 1 : Math.max(1, req.count || 1)); i++) {
+        const id = newId('img_')
+        const rec: ImageRecord = { ...records[0], id, file: `${id}.png`, thumb: `${id}.jpg`, createdAt: Date.now() + i, prompt: req.prompt, width: w, height: h, source: 'hub', favorite: false, seed: req.upscaleOf ? req.seed : Math.floor(Math.random() * 1e9), loras: req.loras, upscaler, upscaledFrom: req.upscaleOf, initImageId: req.initImageId, strength: req.initImageId ? req.strength : undefined }
+        records.unshift(rec)
+        made.push(rec)
+        emit('images:added', rec)
+      }
+      emit('images:job', { ...job, status: 'done', progress: 1, resultIds: made.map((r) => r.id) })
     })()
     return { jobId: job.id }
   },
@@ -584,7 +589,11 @@ const handlers: Handlers = {
 export function installMock(): void {
   ;(window as unknown as { __cairnMedia: (kind: string, file: string) => string }).__cairnMedia = (kind, file) => {
     const base = file.replace(/\.[a-z]+$/, '')
-    return mountainArt(base, kind === 'thumb' ? 360 : 1024, kind === 'thumb' ? 360 : 1024)
+    // Draw it in the shape the picture has, so the layouts can be judged with portrait and wide pictures too.
+    const rec = records.find((r) => r.file === file || r.thumb === file)
+    const aspect = rec ? rec.width / rec.height : 1
+    const long = kind === 'thumb' ? 360 : 1024
+    return mountainArt(base, Math.round(aspect >= 1 ? long : long * aspect), Math.round(aspect >= 1 ? long / aspect : long))
   }
   window.cairn = {
     platform: (q.get('platform') ?? 'linux') as 'linux',
@@ -609,6 +618,19 @@ export function installMock(): void {
       emit('downloads:update', { ...d })
     }
   }, 500)
+  // ?platform=win32 draws stand-ins for the window buttons Windows puts over the top-right corner,
+  // so the layout can be checked for anything that would end up underneath them.
+  if (q.get('platform') === 'win32') {
+    const style = document.createElement('style')
+    style.textContent = `:root[data-platform='win32']{--caption-w:138px}
+.fake-caption{position:fixed;top:0;right:0;width:138px;height:38px;z-index:9999;display:flex;background:#12171c;color:#c8d3d8;font:14px system-ui;pointer-events:none;outline:1px solid rgba(255,255,255,.12)}
+.fake-caption span{flex:1;display:grid;place-items:center}.fake-caption span:last-child{background:#c42b1c;color:#fff}`
+    document.head.append(style)
+    const caption = document.createElement('div')
+    caption.className = 'fake-caption'
+    caption.innerHTML = '<span>&#8212;</span><span>&#9633;</span><span>&#10005;</span>'
+    document.body.append(caption)
+  }
   const view = q.get('view')
   const tab = q.get('tab')
   if (view) {

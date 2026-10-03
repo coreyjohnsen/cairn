@@ -13,6 +13,8 @@
   --rail-w: 64px;
   --panel-w: 280px;
   --topbar-h: 38px;
+  /* Width of the window buttons (minimise, maximise, close) that Windows draws over the top-right corner. */
+  --caption-w: 0px;
 
   --ease: cubic-bezier(0.22, 0.8, 0.24, 1);
   --t-fast: 120ms;
@@ -20,6 +22,10 @@
 
   --fs: 1;
   font-size: calc(15px * var(--fs));
+}
+
+:root[data-platform='win32'] {
+  --caption-w: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
 }
 
 /* ── Alpenglow: dusk slate with a rose-amber glow on the peaks (default) ── */

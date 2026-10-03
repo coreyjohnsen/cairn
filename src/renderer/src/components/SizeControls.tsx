@@ -1,5 +1,4 @@
 import { AlertTriangle, ArrowLeftRight, Info } from 'lucide-react'
-import { useMemo } from 'react'
 import { checkSize } from '@shared/imageSize'
 import type { ImageTargetOption } from '@shared/types'
 import { shapeDiffers } from '@shared/img2img'
@@ -14,21 +13,26 @@ interface Props {
   target?: ImageTargetOption
   /** The starting picture, when there is one: Auto takes its shape and other shapes are checked against it. */
   like?: { width: number; height: number }
+  /** Inside a section that already has a title. */
+  bare?: boolean
+}
+
+/** Plain-language remarks about the chosen size for this kind of model. */
+export function sizeNotes(form: HubForm, target?: ImageTargetOption, like?: { width: number; height: number }) {
+  if (!target) return []
+  const { width, height } = resolveSize(form, target, like)
+  const { arch, guessed } = archOf(target)
+  // "Auto" at the default scale uses the model's own settings, which the user chose for it.
+  if (!(width > 0 && height > 0)) return target.kind === 'openai' ? checkSize({ arch, width: 1024, height: 1024, kind: 'openai' }).slice(0, 1) : []
+  return checkSize({ arch, name: target.label, width, height, builtin: target.kind === 'builtin', vaeTiling: target.vaeTiling, guessed, kind: target.kind })
 }
 
 /** Shape buttons, size buttons or exact width and height, and plain-language warnings about the result. */
-export function SizeControls({ form, setForm, target, like }: Props) {
+export function SizeControls({ form, setForm, target, like, bare }: Props) {
   const size = resolveSize(form, target, like)
   const d = target?.defaults
-  const { arch, guessed } = archOf(target)
   const { width, height } = size
-
-  const notes = useMemo(() => {
-    if (!target) return []
-    // "Auto" at the default scale uses the model's own settings, which the user chose for it.
-    if (!(width > 0 && height > 0)) return target.kind === 'openai' ? checkSize({ arch, width: 1024, height: 1024, kind: 'openai' }).slice(0, 1) : []
-    return checkSize({ arch, name: target.label, width, height, builtin: target.kind === 'builtin', vaeTiling: target.vaeTiling, guessed, kind: target.kind })
-  }, [target, arch, guessed, width, height])
+  const notes = sizeNotes(form, target, like)
 
   const pickRatio = (id: HubForm['ratio']) => {
     if (id === 'custom' && form.ratio !== 'custom') {
@@ -45,7 +49,7 @@ export function SizeControls({ form, setForm, target, like }: Props) {
 
   return (
     <>
-      <Field label="Shape" hint={custom ? undefined : describeSize(form, target, like)}>
+      <Field label={bare ? undefined : 'Shape'} hint={custom ? undefined : describeSize(form, target, like)}>
         <div className="ratio-grid">
           {RATIOS.map((r) => (
             <button key={r.id} type="button" className={cx('ratio', form.ratio === r.id && 'on')} onClick={() => pickRatio(r.id)}>

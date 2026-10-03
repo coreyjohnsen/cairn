@@ -1,7 +1,8 @@
-import { Check, Eye, EyeOff, Loader2, X } from 'lucide-react'
+import { Check, ChevronRight, Eye, EyeOff, Loader2, X } from 'lucide-react'
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { cx } from '@/lib/format'
+import { useSection } from '@/store/layout'
 
 /* ───────────── Buttons ───────────── */
 
@@ -46,11 +47,11 @@ export function Switch({ checked, onChange, disabled, label }: { checked: boolea
   )
 }
 
-export function Segmented<T extends string>({ value, options, onChange, size = 'md' }: { value: T; options: { value: T; label: ReactNode; title?: string }[]; onChange: (v: T) => void; size?: 'sm' | 'md' }) {
+export function Segmented<T extends string>({ value, options, onChange, size = 'md', fill }: { value: T; options: { value: T; label: ReactNode; title?: string; disabled?: boolean }[]; onChange: (v: T) => void; size?: 'sm' | 'md'; /** Stretch to the full width, sharing it equally. */ fill?: boolean }) {
   return (
-    <div className={cx('segmented', `segmented-${size}`)} role="tablist">
+    <div className={cx('segmented', `segmented-${size}`, fill && 'segmented-fill')} role="tablist">
       {options.map((o) => (
-        <button key={o.value} type="button" role="tab" aria-selected={o.value === value} title={o.title} className={cx('seg', o.value === value && 'on')} onClick={() => onChange(o.value)}>
+        <button key={o.value} type="button" role="tab" aria-selected={o.value === value} title={o.title} disabled={o.disabled} className={cx('seg', o.value === value && 'on')} onClick={() => onChange(o.value)}>
           {o.label}
         </button>
       ))}
@@ -236,6 +237,25 @@ export function Field({ label, hint, children, row, className }: { label?: React
 }
 
 /* ───────────── Surfaces ───────────── */
+
+/**
+ * A section that folds away to one line. The line can carry a summary of what is set inside, so closed sections
+ * still tell the story. Open or closed is remembered under `id`.
+ */
+export function Disclosure({ id, title, summary, badge, defaultOpen = false, children }: { id: string; title: ReactNode; summary?: ReactNode; badge?: ReactNode; defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useSection(`disc:${id}`, defaultOpen)
+  return (
+    <div className={cx('disclosure', open && 'open')}>
+      <button type="button" className="disclosure-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <ChevronRight size={14} className="disclosure-caret" />
+        <span className="disclosure-title">{title}</span>
+        {badge}
+        {summary != null && summary !== '' && <span className="disclosure-sum ellipsis">{summary}</span>}
+      </button>
+      {open && <div className="disclosure-body">{children}</div>}
+    </div>
+  )
+}
 
 export function Card({ children, className, pad = true, style }: { children: ReactNode; className?: string; pad?: boolean; style?: CSSProperties }) {
   return (

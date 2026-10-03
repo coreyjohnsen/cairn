@@ -14,6 +14,7 @@ import { cx } from '@/lib/format'
 import { type ViewId, useApp } from '@/store/app'
 import { useChat } from '@/store/chat'
 import { useImages } from '@/store/images'
+import { useLayout } from '@/store/layout'
 import { useLibrary } from '@/store/library'
 
 const NAV: { id: ViewId; label: string; icon: typeof Layers }[] = [
@@ -55,6 +56,20 @@ export function App() {
       .init()
       .then(() => Promise.all([useChat.getState().init(), useImages.getState().init(), useLibrary.getState().init()]))
       .catch((e) => console.error('Startup failed', e))
+  }, [])
+
+  // Ctrl+B folds or shows the side panel of the current screen, as in most editors.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'b') return
+      const v = useApp.getState().view
+      if (v !== 'chat' && v !== 'images') return
+      if (document.querySelector('.mask-editor, .lightbox, .modal-backdrop')) return
+      e.preventDefault()
+      useLayout.getState().toggle(v === 'chat' ? 'conversations' : 'create')
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
 
   const theme = settings?.appearance

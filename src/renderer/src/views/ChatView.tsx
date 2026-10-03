@@ -1,5 +1,5 @@
-import { Download, FileText, MoreHorizontal, Pencil, Pin, PinOff, SlidersHorizontal, Trash2, Upload } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { Download, FileText, MoreHorizontal, Pencil, PanelLeftOpen, Pin, PinOff, SlidersHorizontal, Trash2, Upload } from 'lucide-react'
+import { type CSSProperties, useRef, useState } from 'react'
 import type { ApprovalRequest } from '@shared/types'
 import { ApprovalDock } from '@/components/ApprovalDock'
 import { ChatSettingsModal } from '@/components/ChatSettingsModal'
@@ -9,11 +9,12 @@ import { MessageList } from '@/components/MessageList'
 import { Ridgeline } from '@/components/Ridgeline'
 import { Button, IconButton, MenuItem, MenuSeparator, Modal, Popover } from '@/components/ui'
 import { invoke } from '@/lib/api'
-import { errorText } from '@/lib/format'
+import { cx, errorText } from '@/lib/format'
 import { readFiles } from '@/lib/files'
 import { useApp } from '@/store/app'
 import { useChat } from '@/store/chat'
 import { useComposerBus } from '@/store/composer'
+import { useLayout, usePanel } from '@/store/layout'
 
 const NO_APPROVALS: ApprovalRequest[] = []
 
@@ -73,6 +74,8 @@ function ChatHeader({ onSettings }: { onSettings: () => void }) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState('')
   const [confirm, setConfirm] = useState(false)
+  const { collapsed } = usePanel('conversations')
+  const toggleList = useLayout((s) => s.toggle)
 
   const commit = () => {
     setEditing(false)
@@ -81,7 +84,12 @@ function ChatHeader({ onSettings }: { onSettings: () => void }) {
   }
 
   return (
-    <header className="chat-head">
+    <header className={cx('chat-head', collapsed && 'list-folded')}>
+      {collapsed && (
+        <IconButton label="Show the chat list (Ctrl+B)" onClick={() => toggleList('conversations')}>
+          <PanelLeftOpen size={17} />
+        </IconButton>
+      )}
       {editing && conv ? (
         <input
           className="chat-title-edit"
@@ -211,12 +219,13 @@ export function ChatView() {
   const [dragging, setDragging] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const depth = useRef(0)
+  const { width: listWidth, collapsed: listFolded } = usePanel('conversations')
 
   const hasMessages = !!conv && conv.messages.length > 0
   const hasFiles = (e: React.DragEvent) => [...e.dataTransfer.types].includes('Files')
 
   return (
-    <div className="chat-layout">
+    <div className="chat-layout" style={{ '--conv-w': `${listFolded ? 0 : listWidth}px` } as CSSProperties}>
       <ConversationPanel />
       <section
         className="chat-main"

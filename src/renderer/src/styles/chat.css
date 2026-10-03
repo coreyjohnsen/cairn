@@ -1,9 +1,12 @@
 /* ───────── Chat layout ───────── */
 .chat-layout {
+  --conv-w: var(--panel-w);
+  /* The reading column follows the free space: wider windows, or a folded chat list, give it more room. */
+  --chat-max: clamp(880px, calc(100vw - var(--rail-w) - var(--conv-w) - 300px), 1120px);
   flex: 1;
   min-width: 0;
   display: grid;
-  grid-template-columns: var(--panel-w) minmax(0, 1fr);
+  grid-template-columns: min(var(--conv-w), calc(100vw - var(--rail-w) - 440px)) minmax(0, 1fr);
 }
 .chat-main {
   position: relative;
@@ -41,13 +44,14 @@
 .chat-bottom {
   flex: none;
   width: 100%;
-  max-width: 880px;
+  max-width: var(--chat-max);
   margin: 0 auto;
   padding: 0 26px 14px;
 }
 
 /* ───────── Conversation list ───────── */
 .conv-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -258,7 +262,7 @@
 }
 .messages-inner {
   width: 100%;
-  max-width: 880px;
+  max-width: var(--chat-max);
   margin: 0 auto;
   padding: 8px 26px 28px;
   display: flex;

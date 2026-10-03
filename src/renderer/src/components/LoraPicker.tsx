@@ -9,6 +9,7 @@ import { archOf } from '@/lib/imageSize'
 import { useApp } from '@/store/app'
 import { useImages } from '@/store/images'
 import { Button, Field, IconButton, Notice, Select, Slider, TextField } from './ui'
+import type { UpscalerFile } from '@shared/types'
 
 const BASE_NAME: Record<NonNullable<LoraFile['base']>, string> = { sd: 'Stable Diffusion 1.x', sdxl: 'SDXL', flux: 'FLUX', sd3: 'Stable Diffusion 3' }
 export const DEFAULT_LORA_STRENGTH = 0.8
@@ -22,6 +23,12 @@ export function loraMismatch(file: LoraFile | undefined, target: ImageTargetOpti
   const how = file.baseGuessed ? 'its file name suggests it is for' : 'it was trained for'
   return `${how} ${BASE_NAME[base]}, but this model is ${BASE_NAME[arch as keyof typeof BASE_NAME]}. It will most likely be ignored or spoil the picture.`
 }
+
+/** The LoRA section is shown when the model can use them, or while some are still chosen so they can be removed. */
+export const loraSectionShown = (target: ImageTargetOption | undefined, value: LoraSelection[]): boolean => !!target?.supportsLora || value.length > 0
+
+/** The built-in engine can use any listed upscaler; Real-ESRGAN upscalers also work after any other image backend. */
+export const usableUpscalers = (target: ImageTargetOption | undefined, upscalers: UpscalerFile[]): UpscalerFile[] => (target?.supportsLora ? upscalers : upscalers.filter((u) => u.engine === 'esrgan'))
 
 function openFolder(kind: 'lora' | 'upscale', toast: (t: 'error', m: string) => void) {
   invoke('images:openFolder', kind).catch((e) => toast('error', errorText(e)))
@@ -65,7 +72,7 @@ function LoraRow({ sel, file, target, onChange, onRemove }: { sel: LoraSelection
 }
 
 /** Choose LoRAs for the next picture. Only shown for models that can use them. */
-export function LoraPicker({ target, value, onChange }: { target?: ImageTargetOption; value: LoraSelection[]; onChange: (next: LoraSelection[]) => void }) {
+export function LoraPicker({ target, value, onChange, bare }: { target?: ImageTargetOption; value: LoraSelection[]; onChange: (next: LoraSelection[]) => void; bare?: boolean }) {
   const files = useImages((s) => s.loraFiles)
   const meta = useApp((s) => s.settings?.image.loraMeta)
   const toast = useApp((s) => s.toast)
@@ -110,7 +117,7 @@ export function LoraPicker({ target, value, onChange }: { target?: ImageTargetOp
   }
 
   return (
-    <Field label="LoRAs" hint={value.length ? `${value.length} in use` : undefined}>
+    <Field label={bare ? undefined : 'LoRAs'} hint={bare ? undefined : value.length ? `${value.length} in use` : undefined}>
       <div className="stack" style={{ gap: 10 }}>
         {!canUse && (
           <Notice tone="warn" action={<Button size="sm" onClick={() => onChange([])}>Remove</Button>}>
@@ -165,16 +172,15 @@ export function LoraPicker({ target, value, onChange }: { target?: ImageTargetOp
 }
 
 /** "Upscale when done": pick one of the upscaler files, or none. */
-export function UpscalePicker({ target, value, onChange, width, height, isDefault }: { target?: ImageTargetOption; value?: { path: string; repeats: number }; onChange: (v?: { path: string; repeats: number }) => void; width?: number; height?: number; isDefault?: boolean }) {
+export function UpscalePicker({ target, value, onChange, width, height, isDefault, bare }: { target?: ImageTargetOption; value?: { path: string; repeats: number }; onChange: (v?: { path: string; repeats: number }) => void; width?: number; height?: number; isDefault?: boolean; bare?: boolean }) {
   const upscalers = useImages((s) => s.upscalers)
   const toast = useApp((s) => s.toast)
-  // The built-in engine can use any listed upscaler; Real-ESRGAN upscalers also work after any other image backend.
-  const usable = target?.supportsLora ? upscalers : upscalers.filter((u) => u.engine === 'esrgan')
+  const usable = usableUpscalers(target, upscalers)
   if (!target || (!target.supportsLora && usable.length === 0)) return null
   const chosen = usable.find((u) => u.path === value?.path)
   const factor = chosen ? chosen.scale ** (value?.repeats ?? 1) : 0
   return (
-    <Field label="Upscale when done" hint={chosen && width && height ? `About ${Math.round(width * factor)} × ${Math.round(height * factor)}` : undefined}>
+    <Field label={bare ? undefined : 'Upscale when done'} hint={chosen && width && height ? `About ${Math.round(width * factor)} × ${Math.round(height * factor)}` : undefined}>
       <div className="stack" style={{ gap: 8 }}>
         <div className="row">
           <Select
