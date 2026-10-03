@@ -124,6 +124,8 @@ export function buildHandlers(s: Services, platform: PlatformApi): Handlers {
     'chat:send': (req) => s.runner.send(req),
     'chat:regenerate': (id) => s.runner.regenerate(id),
     'chat:abort': (id) => s.runner.abort(id),
+    'chat:compact': (id) => s.runner.compactNow(id),
+    'chat:uncompact': (id) => s.runner.uncompact(id),
     'chat:approve': (approvalId, decision) => {
       s.approvals.resolve(approvalId, decision)
     },

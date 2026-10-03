@@ -7,7 +7,7 @@ export async function completeText(
   model: string,
   system: string,
   user: string,
-  opts: { maxTokens?: number; temperature?: number; signal?: AbortSignal; timeoutMs?: number } = {}
+  opts: { maxTokens?: number; temperature?: number; signal?: AbortSignal; timeoutMs?: number; /** Same as the chat's, so a local server is not restarted with other flags for this request. */ thinking?: 'on' | 'off' } = {}
 ): Promise<string> {
   const msg: ChatMessage = { id: 'tmp', role: 'user', createdAt: Date.now(), content: user }
   const timeout = AbortSignal.timeout(opts.timeoutMs ?? 60000)
@@ -19,6 +19,7 @@ export async function completeText(
     messages: [msg],
     tools: [],
     params: { temperature: opts.temperature ?? 0.4, maxTokens: opts.maxTokens ?? 256 },
+    thinking: opts.thinking,
     signal,
     loadAttachment: async () => null
   })) {

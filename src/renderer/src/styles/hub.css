@@ -1340,6 +1340,35 @@
     grid-auto-columns: 72px;
   }
 }
+@container gallery (max-width: 760px) {
+  /* Less chrome around a smaller picture: the buttons keep their icons and lose their words. */
+  .stage-info {
+    gap: 8px;
+    padding: 10px 16px 12px;
+  }
+  .stage-prompt {
+    max-height: 3em;
+  }
+  .stage-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .chip {
+    flex: none;
+  }
+  .stage-actions .btn:not(.btn-primary) > span {
+    display: none;
+  }
+  .stage-canvas {
+    padding: 4px 16px 12px;
+  }
+  .stage-img {
+    inset: 4px 16px 12px;
+    width: calc(100% - 32px);
+    height: calc(100% - 16px);
+  }
+}
 @container gallery (max-width: 520px) {
   .stage-canvas {
     padding: 4px 14px 14px;

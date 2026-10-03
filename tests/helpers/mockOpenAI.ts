@@ -10,6 +10,8 @@ export interface ScriptedTurn {
   /** Respond with this HTTP status + body instead of streaming. */
   error?: { status: number; body: unknown }
   finish?: string
+  /** Token counts the server reports for this turn (default 11 and 7). */
+  usage?: { prompt: number; completion: number }
 }
 
 export interface MockServer {
@@ -51,7 +53,7 @@ export async function startMockOpenAI(script: ScriptedTurn[]): Promise<MockServe
           send({ choices: [{ delta: { tool_calls: [{ index: i, function: { arguments: tc.args.slice(half) } }] } }] })
         })
         send({ choices: [{ delta: {}, finish_reason: t.finish ?? (t.toolCalls?.length ? 'tool_calls' : 'stop') }] })
-        send({ choices: [], usage: { prompt_tokens: 11, completion_tokens: 7 } })
+        send({ choices: [], usage: { prompt_tokens: t.usage?.prompt ?? 11, completion_tokens: t.usage?.completion ?? 7 } })
         res.write('data: [DONE]\n\n')
         res.end()
       })

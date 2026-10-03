@@ -58,6 +58,10 @@ export interface IpcInvokeMap {
   'chat:send': { args: [req: SendRequest]; result: { runId: string } }
   'chat:regenerate': { args: [conversationId: string]; result: { runId: string } }
   'chat:abort': { args: [conversationId: string]; result: void }
+  /** Summarize the older part of the chat now, to free the model's memory. */
+  'chat:compact': { args: [conversationId: string]; result: void }
+  /** Go back to sending the model the whole chat. */
+  'chat:uncompact': { args: [conversationId: string]; result: Conversation | null }
   'chat:approve': { args: [approvalId: string, decision: ApprovalDecision]; result: void }
   'chat:active': { args: []; result: string[] }
   'chat:enhance': { args: [prompt: string]; result: string }
@@ -158,6 +162,8 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'chat:send',
   'chat:regenerate',
   'chat:abort',
+  'chat:compact',
+  'chat:uncompact',
   'chat:approve',
   'chat:active',
   'chat:enhance',

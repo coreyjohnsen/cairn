@@ -155,6 +155,53 @@ export interface ImageTarget {
   model: string
 }
 
+/** One line of the record of what the assistant did with tools, kept after the messages themselves are summarized away. */
+export interface LedgerEntry {
+  /** read file, wrote or edited a file, ran a command, searched, used the web, anything else, was declined by the user */
+  k: 'read' | 'wrote' | 'cmd' | 'find' | 'web' | 'misc' | 'denied'
+  /** The file, command, search or call this is about. */
+  t: string
+  /** How many times it happened. */
+  n: number
+  /** Outcome, such as "exit 1", "failed" or "lines 1-200". */
+  note?: string
+}
+
+/**
+ * What stands in for the older part of a long chat once it has been summarized, so the model's memory does not fill up.
+ * The messages themselves are kept and shown; only what the model is sent changes.
+ */
+export interface Compaction {
+  /** The model's own account of the goal, what is done, what was learned and what is next. Empty when it could not write one. */
+  narrative: string
+  /** What was asked of the assistant lately, word for word (shortened). */
+  asks: string[]
+  /** Every tool call made, listed from the messages rather than written by the model, so it cannot be wrong or forgotten. */
+  ledger: LedgerEntry[]
+  /** Messages up to and including this one are replaced by the summary. */
+  upToMessageId: string
+  /** How much it stands in for, over every time the chat was summarized. */
+  messages: number
+  toolCalls: number
+  /** Rough size of the model's view of the chat before and after, in tokens. */
+  tokensBefore: number
+  tokensAfter: number
+  createdAt: number
+  /** `model` when the model wrote the narrative; `ledger` when only the list of tool calls could be kept. */
+  source: 'model' | 'ledger'
+  /** How many times the summary has been rolled forward. */
+  rounds: number
+}
+
+/** How full the model's memory was at its last request. */
+export interface ContextUsage {
+  /** Tokens in the request, as the server counted them when it said, otherwise estimated. */
+  used: number
+  /** The model's context size. */
+  window: number
+  at: number
+}
+
 export interface Conversation {
   id: string
   title: string
@@ -169,6 +216,9 @@ export interface Conversation {
   imageTarget?: ImageTarget
   params: ConversationParams
   messages: ChatMessage[]
+  /** Set once the older part of the chat has been summarized for the model. */
+  compaction?: Compaction
+  contextUsage?: ContextUsage
 }
 
 export interface ConversationSummary {
@@ -226,6 +276,8 @@ export type ChatEvent =
   | { type: 'approval-resolved'; runId: string; conversationId: string; approvalId: string }
   | { type: 'status'; runId: string; conversationId: string; status: string }
   | { type: 'title'; conversationId: string; title: string }
+  | { type: 'context'; conversationId: string; usage: ContextUsage }
+  | { type: 'compaction'; conversationId: string; compaction?: Compaction }
   | { type: 'run-end'; runId: string; conversationId: string; outcome: 'done' | 'aborted' | 'error'; error?: string }
 
 export interface SendRequest {
@@ -721,6 +773,10 @@ export interface ChatSettings {
   sendOnEnter: boolean
   /** Soft context budget (tokens) used to trim long chats; 0 = auto for local, unlimited otherwise. */
   contextBudget: number
+  /** Summarize the older part of a chat when the model's memory is nearly full, instead of dropping it. */
+  autoCompact: boolean
+  /** How full the memory may get before that happens, as a percent of the room for the conversation. */
+  compactAt: number
   /** Default for new chats; each chat can override it from the message box. */
   thinking: ThinkingMode
 }

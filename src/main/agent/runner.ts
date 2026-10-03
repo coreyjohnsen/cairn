@@ -4,6 +4,8 @@ import type {
   Attachment,
   ChatEvent,
   ChatMessage,
+  Compaction,
+  ContextUsage,
   Conversation,
   ImageGenRequest,
   ImageRef,
@@ -25,7 +27,8 @@ import { parseToolArgs, truncateMiddle } from '../util/json'
 import { contextOutputLimit, maxAgentSteps, toolOutputLimit } from '../util/limits'
 import type { ApprovalManager } from './approvals'
 import { cleanTitle, completeText } from './complete'
-import { estimateTokens, fitHistory, historyFor } from './context'
+import { MIN_COMPACT_BUDGET, applyCompaction, asksFrom, chooseCut, isContextOverflow, keptFrom, ledgerFrom, mergeLedger, transcriptBlocks, validCompaction, writeNarrative } from './compact'
+import { estimateTokens, fitHistory, historyFor, totalTokens } from './context'
 import { detectImageRequest, isExplicitImageCommand } from './intent'
 import { buildSystemPrompt } from './prompt'
 
@@ -87,6 +90,8 @@ function errMsg(e: unknown): string {
 export class ChatRunner {
   private runs = new Map<string, ActiveRun>()
   private chatAllow = new Map<string, Set<string>>()
+  /** How many real tokens the server counts for each token this app estimates, learned per chat from its replies. */
+  private calibration = new Map<string, number>()
 
   constructor(private d: RunnerDeps) {}
 
@@ -167,6 +172,36 @@ export class ChatRunner {
     const run = this.begin(conv)
     void this.execute(run, () => this.runAgent(run, conv.messages[lastUser].content))
     return { runId: run.runId }
+  }
+
+  /** Summarize the older part of a chat now, to free the model's memory. Runs in the background like a reply. */
+  async compactNow(conversationId: string): Promise<void> {
+    const conv = this.d.conversations.get(conversationId)
+    if (!conv) throw new Error('Conversation not found')
+    if (this.runs.has(conv.id)) throw new Error('Wait for the reply to finish, then summarize.')
+    const settings = this.d.getSettings()
+    const resolved = await this.d.models.resolve(conv.modelRef || settings.defaultModel)
+    if (!resolved) throw new Error('No model selected. Pick a model under the message box first.')
+    const prep = this.prepare(conv, resolved)
+    const budget = prep.budget || Math.max(4000, Math.floor((resolved.contextTokens ?? 16000) * 0.7))
+    const from = keptFrom(conv.messages, conv.compaction)
+    const cut = chooseCut(conv.messages, from, Math.max(600, Math.floor(budget * 0.25)))
+    if (cut <= from || totalTokens(conv.messages.slice(from, cut)) < 300) throw new Error('There is not enough earlier conversation to summarize yet.')
+    const run = this.begin(conv)
+    void this.execute(run, async () => {
+      await this.compact(run, conv, resolved, { budget, tailFraction: 0.25, thinking: prep.thinking, signal: run.controller.signal })
+    })
+  }
+
+  /** Go back to sending the model the whole chat. */
+  uncompact(conversationId: string): Conversation | null {
+    const conv = this.d.conversations.get(conversationId)
+    if (!conv) return null
+    if (this.runs.has(conv.id)) throw new Error('Wait for the reply to finish first.')
+    conv.compaction = undefined
+    this.d.conversations.markDirty(conv.id)
+    this.d.emit({ type: 'compaction', conversationId: conv.id })
+    return conv
   }
 
   /* ───────────────────────────── plumbing ───────────────────────────── */
@@ -303,35 +338,36 @@ export class ChatRunner {
       }
     }
 
-    const toolImpls: ToolImpl[] = toolsWanted ? this.d.tools.forRun(imageAvailable) : []
+    const { toolImpls, toolDefs, system, params, thinking, budget, workspace } = this.prepare(conv, resolved)
     const toolMap = new Map(toolImpls.map((t) => [t.name, t]))
-    const toolDefs: ToolDef[] = toolImpls.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))
-    const workspace = (conv.workspace || settings.agent.workspace || '').trim() || null
-    const system = buildSystemPrompt(settings, conv, toolImpls, workspace)
-
-    const params = {
-      temperature: conv.params.temperature ?? settings.chat.temperature,
-      topP: conv.params.topP ?? settings.chat.topP,
-      maxTokens: conv.params.maxTokens || settings.chat.maxTokens || undefined
-    }
-
-    const thinkingMode = conv.params.thinking ?? settings.chat.thinking ?? 'auto'
-    const thinking = thinkingMode === 'auto' ? undefined : thinkingMode
-
-    let budget = settings.chat.contextBudget
-    if (!budget && resolved.contextTokens) {
-      const reserve = (params.maxTokens ?? 2048) + estimateTokens(system) + estimateTokens(JSON.stringify(toolDefs))
-      budget = resolved.contextTokens - reserve
-      if (budget < 1000) budget = Math.floor(resolved.contextTokens * 0.6)
-    }
 
     run.budget = budget
     const maxSteps = maxAgentSteps(settings)
     const signal = run.controller.signal
 
+    // A summary left over from messages that have since been removed no longer describes this chat.
+    if (conv.compaction && !validCompaction(conv.messages, conv.compaction)) {
+      conv.compaction = undefined
+      this.d.emit({ type: 'compaction', conversationId: conv.id })
+    }
+    const toolsOn = toolDefs.length > 0
+    const fixedTokens = estimateTokens(system) + estimateTokens(JSON.stringify(toolDefs))
+    // Estimates are rough, most of all for code; the server's own count of the last request corrects them.
+    let scale = this.calibration.get(conv.id) ?? 1.1
+    const autoCompact = settings.chat.autoCompact !== false && budget >= MIN_COMPACT_BUDGET
+    const trigger = Math.min(95, Math.max(40, settings.chat.compactAt || 75)) / 100
+    const historyNow = () => historyFor(applyCompaction(conv.messages, conv.compaction), toolsOn)
+    const compactArgs = (tailFraction: number) => ({ budget, tailFraction, thinking, signal })
+
     for (let step = 0; step < maxSteps; step++) {
       if (signal.aborted) return
-      const history = fitHistory(historyFor(conv.messages, toolDefs.length > 0), budget)
+      let history = historyNow()
+      // Past the threshold: fold the older messages into a summary instead of letting them be dropped.
+      if (autoCompact && totalTokens(history) * scale > budget * trigger) {
+        if (await this.compact(run, conv, resolved, compactArgs(0.3))) history = historyNow()
+        if (signal.aborted) return
+      }
+      history = fitHistory(history, budget ? budget / scale : 0)
       const assistant: ChatMessage = {
         id: newId('m_'),
         role: 'assistant',
@@ -367,57 +403,86 @@ export class ChatRunner {
         if (!timer) timer = setTimeout(flush, 40)
       }
 
-      try {
-        for await (const ev of provider.stream({
-          model: option.id,
-          system,
-          messages: history,
-          tools: toolDefs,
-          params,
-          thinking,
-          signal,
-          loadAttachment: (a) => this.d.attachments.load(a)
-        })) {
-          if (ev.type === 'text') {
-            assistant.content += ev.text
-            pendingText += ev.text
-            schedule()
-          } else if (ev.type === 'reasoning') {
-            assistant.reasoning = (assistant.reasoning ?? '') + ev.text
-            pendingReasoning += ev.text
-            schedule()
-          } else if (ev.type === 'tool_call') {
-            const cur = calls.get(ev.index) ?? { id: '', name: '', args: '' }
-            if (ev.id) cur.id = ev.id
-            if (ev.name) cur.name = ev.name
-            if (ev.args) cur.args += ev.args
-            calls.set(ev.index, cur)
-          } else if (ev.type === 'usage') {
-            assistant.usage = {
-              promptTokens: ev.promptTokens ?? assistant.usage?.promptTokens,
-              completionTokens: ev.completionTokens ?? assistant.usage?.completionTokens,
-              tokensPerSecond: ev.tokensPerSecond ?? assistant.usage?.tokensPerSecond
+      let overflowRetried = false
+      for (;;) {
+        try {
+          for await (const ev of provider.stream({
+            model: option.id,
+            system,
+            messages: history,
+            tools: toolDefs,
+            params,
+            thinking,
+            signal,
+            loadAttachment: (a) => this.d.attachments.load(a)
+          })) {
+            if (ev.type === 'text') {
+              assistant.content += ev.text
+              pendingText += ev.text
+              schedule()
+            } else if (ev.type === 'reasoning') {
+              assistant.reasoning = (assistant.reasoning ?? '') + ev.text
+              pendingReasoning += ev.text
+              schedule()
+            } else if (ev.type === 'tool_call') {
+              const cur = calls.get(ev.index) ?? { id: '', name: '', args: '' }
+              if (ev.id) cur.id = ev.id
+              if (ev.name) cur.name = ev.name
+              if (ev.args) cur.args += ev.args
+              calls.set(ev.index, cur)
+            } else if (ev.type === 'usage') {
+              assistant.usage = {
+                promptTokens: ev.promptTokens ?? assistant.usage?.promptTokens,
+                completionTokens: ev.completionTokens ?? assistant.usage?.completionTokens,
+                tokensPerSecond: ev.tokensPerSecond ?? assistant.usage?.tokensPerSecond
+              }
+            } else if (ev.type === 'finish') {
+              finishReason = ev.reason
             }
-          } else if (ev.type === 'finish') {
-            finishReason = ev.reason
           }
-        }
-      } catch (e) {
-        if (timer) clearTimeout(timer)
-        flush()
-        assistant.durationMs = Date.now() - started
-        if (signal.aborted || isAbortError(e)) {
-          assistant.status = 'aborted'
+          break
+        } catch (e) {
+          // The server said the request does not fit its memory. Nothing of the reply has arrived yet, so summarize
+          // harder and ask again once, rather than ending the task.
+          if (!overflowRetried && !signal.aborted && isContextOverflow(e) && !assistant.content && !assistant.reasoning && calls.size === 0) {
+            overflowRetried = true
+            scale = Math.min(2.5, scale * 1.3)
+            this.calibration.set(conv.id, scale)
+            const base = budget || Math.floor((resolved.contextTokens ?? 8192) * 0.6)
+            if (settings.chat.autoCompact !== false) await this.compact(run, conv, resolved, { budget: base, tailFraction: 0.15, thinking, signal })
+            if (signal.aborted) return
+            history = fitHistory(historyNow(), Math.floor((base / scale) * 0.85))
+            continue
+          }
+          if (timer) clearTimeout(timer)
+          flush()
+          assistant.durationMs = Date.now() - started
+          if (signal.aborted || isAbortError(e)) {
+            assistant.status = 'aborted'
+            this.emitMessage(run, assistant)
+            return
+          }
+          assistant.status = 'error'
+          assistant.error = errMsg(e)
           this.emitMessage(run, assistant)
-          return
+          throw e
         }
-        assistant.status = 'error'
-        assistant.error = errMsg(e)
-        this.emitMessage(run, assistant)
-        throw e
       }
       if (timer) clearTimeout(timer)
       flush()
+
+      // Learn how this model's token count compares with the estimate, and tell the window how full its memory is.
+      const sentEstimate = fixedTokens + totalTokens(history)
+      const real = assistant.usage?.promptTokens
+      if (real && sentEstimate > 200) {
+        scale = Math.min(2.5, Math.max(0.7, scale * 0.5 + (real / sentEstimate) * 0.5))
+        this.calibration.set(conv.id, scale)
+      }
+      if (resolved.contextTokens) {
+        const usage: ContextUsage = { used: Math.round((real ?? sentEstimate * scale) + (assistant.usage?.completionTokens ?? 0)), window: resolved.contextTokens, at: Date.now() }
+        conv.contextUsage = usage
+        this.d.emit({ type: 'context', conversationId: conv.id, usage })
+      }
 
       const toolCalls: ToolCall[] = [...calls.entries()]
         .sort(([a], [b]) => a - b)
@@ -454,6 +519,90 @@ export class ChatRunner {
       notice: `Stopped after ${maxSteps} tool steps. Send a message to let the assistant continue.`
     }
     this.emitMessage(run, notice)
+  }
+
+  /** Everything one request to the model is built from: the tools on offer, the system prompt, sampling and the room left for the chat. */
+  private prepare(conv: Conversation, resolved: ResolvedModel) {
+    const settings = this.d.getSettings()
+    const { option } = resolved
+    const toolsWanted = conv.toolsEnabled && option.caps.tools !== false
+    const toolImpls: ToolImpl[] = toolsWanted ? this.d.tools.forRun(this.d.images.available()) : []
+    const toolDefs: ToolDef[] = toolImpls.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))
+    const workspace = (conv.workspace || settings.agent.workspace || '').trim() || null
+    const system = buildSystemPrompt(settings, conv, toolImpls, workspace)
+    const params = {
+      temperature: conv.params.temperature ?? settings.chat.temperature,
+      topP: conv.params.topP ?? settings.chat.topP,
+      maxTokens: conv.params.maxTokens || settings.chat.maxTokens || undefined
+    }
+    const thinkingMode = conv.params.thinking ?? settings.chat.thinking ?? 'auto'
+    const thinking = thinkingMode === 'auto' ? undefined : thinkingMode
+    // What is left of the model's memory for the conversation once the system prompt, the tool list and the reply are set aside.
+    let budget = settings.chat.contextBudget
+    if (!budget && resolved.contextTokens) {
+      const reserve = (params.maxTokens ?? 2048) + estimateTokens(system) + estimateTokens(JSON.stringify(toolDefs))
+      budget = resolved.contextTokens - reserve
+      if (budget < 1000) budget = Math.floor(resolved.contextTokens * 0.6)
+    }
+    return { toolImpls, toolDefs, system, params, thinking, budget, workspace }
+  }
+
+  /**
+   * Replace the older part of the chat with a summary, keeping the most recent messages as they are. The summary has two
+   * parts: a list of every tool call, made from the messages themselves, and the model's own account of the goal, what is
+   * done and what was learned. If the model cannot write the account the list alone is kept, so nothing is lost silently.
+   * Returns null when there is nothing worth summarizing.
+   */
+  private async compact(
+    run: ActiveRun,
+    conv: Conversation,
+    resolved: ResolvedModel,
+    o: { budget: number; tailFraction: number; thinking?: 'on' | 'off'; signal: AbortSignal }
+  ): Promise<Compaction | null> {
+    const from = keptFrom(conv.messages, conv.compaction)
+    const cut = chooseCut(conv.messages, from, Math.max(500, Math.floor(o.budget * o.tailFraction)))
+    if (cut <= from) return null
+    const range = conv.messages.slice(from, cut)
+    if (totalTokens(range) < 300) return null
+    const prior = validCompaction(conv.messages, conv.compaction)
+    const { entries, calls } = ledgerFrom(range)
+    const before = totalTokens(applyCompaction(conv.messages, conv.compaction))
+
+    this.d.emit({ type: 'status', runId: run.runId, conversationId: conv.id, status: 'Summarizing the earlier conversation to free up memory…' })
+    const words = Math.max(120, Math.min(380, Math.floor((o.budget * 0.1) / 1.4)))
+    const window = resolved.contextTokens ?? Math.max(o.budget + 4000, 8192)
+    const capacity = window - Math.ceil(words * 2.2) - 450 - estimateTokens(prior?.narrative ?? '') - 600
+    let narrative: string | null = null
+    try {
+      narrative = await writeNarrative(
+        (system, user, maxTokens) => completeText(resolved.provider, resolved.option.id, system, user, { maxTokens, temperature: 0.2, signal: o.signal, timeoutMs: 180_000, thinking: o.thinking }),
+        { prior: prior?.narrative ?? '', blocks: transcriptBlocks(range), capacityTokens: capacity, words }
+      )
+    } catch (e) {
+      if (o.signal.aborted || isAbortError(e)) throw e
+      narrative = null
+    }
+
+    const next: Compaction = {
+      narrative: narrative ?? prior?.narrative ?? '',
+      asks: asksFrom(prior?.asks ?? [], range),
+      ledger: mergeLedger(prior?.ledger ?? [], entries),
+      upToMessageId: conv.messages[cut - 1].id,
+      messages: (prior?.messages ?? 0) + range.length,
+      toolCalls: (prior?.toolCalls ?? 0) + calls,
+      tokensBefore: before,
+      tokensAfter: 0,
+      createdAt: Date.now(),
+      source: narrative ? 'model' : 'ledger',
+      rounds: (prior?.rounds ?? 0) + 1
+    }
+    next.tokensAfter = totalTokens(applyCompaction(conv.messages, next))
+    // A summary that is not smaller than what it replaces would only add work.
+    if (next.tokensAfter >= before) return null
+    conv.compaction = next
+    this.d.conversations.markDirty(conv.id)
+    this.d.emit({ type: 'compaction', conversationId: conv.id, compaction: next })
+    return next
   }
 
   private services(run: ActiveRun): ToolServices {

@@ -190,6 +190,8 @@ export function defaultSettings(modelsDir: string): Settings {
       detectImageIntent: true,
       sendOnEnter: true,
       contextBudget: 0,
+      autoCompact: true,
+      compactAt: 75,
       thinking: 'auto'
     },
     agent: {

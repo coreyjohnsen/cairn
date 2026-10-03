@@ -9,7 +9,7 @@ import { OpenAIProvider } from '../src/main/providers/openai'
 import { McpManager } from '../src/main/tools/mcp'
 import { ToolRegistry } from '../src/main/tools/registry'
 import { defaultSettings } from '../src/shared/defaults'
-import type { ChatEvent, ImageRef, Settings } from '../src/shared/types'
+import type { ChatEvent, ChatMessage, ImageRef, Settings } from '../src/shared/types'
 import { type MockServer, type ScriptedTurn, startMockOpenAI } from './helpers/mockOpenAI'
 
 let dir: string
@@ -294,5 +294,164 @@ describe('ChatRunner', () => {
     const c = store.get(conv.id)!
     expect(c.messages.map((m) => m.role)).toEqual(['user', 'assistant'])
     expect(c.messages[1].content).toBe('second')
+  })
+})
+
+
+describe('long tasks and the model\'s memory', () => {
+  const NAMES = ['one', 'two', 'three', 'four']
+  const readCall = (name: string): ScriptedTurn => ({ toolCalls: [{ id: `r_${name}`, name: 'read_file', args: JSON.stringify({ path: `${name}.txt` }) }] })
+  const SUMMARY = 'Goal: read all four files. Done: read one and two. Learned: ONE-MARKER is filler text. Next: read the rest.'
+
+  beforeEach(() => {
+    // About 4,200 characters each, a little over 1,100 tokens: three of them fill a 3,000-token budget.
+    for (const n of NAMES) fs.writeFileSync(path.join(ws, `${n}.txt`), `${n.toUpperCase()}-MARKER\n${Array.from({ length: 62 }, (_, i) => `line ${i} abcdefghijklmnopqrstuvwxyz abcdefghijklmnopqrstuvwxyz`).join('\n')}`)
+    settings.agent.toolPermissions = { read_file: 'auto' }
+    settings.chat.contextBudget = 3000
+    settings.chat.toolOutputLimit = 0
+    settings.chat.autoTitle = false
+  })
+
+  /** An earlier, finished stretch of the chat: user, then `reads` file reads, then an answer. */
+  function seedHistory(convId: string, reads: number, chars = 2400): void {
+    const msgs: ChatMessage[] = [{ id: 'u0', role: 'user', createdAt: 1, content: 'Look through the project files for me.', status: 'done' }]
+    for (let i = 0; i < reads; i++) {
+      msgs.push({ id: `a${i}`, role: 'assistant', createdAt: 2, content: '', status: 'done', toolCalls: [{ id: `s${i}`, name: 'read_file', arguments: JSON.stringify({ path: `old${i}.ts` }) }] })
+      msgs.push({ id: `t${i}`, role: 'tool', createdAt: 3, toolCallId: `s${i}`, toolName: 'read_file', content: `OLD${i}-CONTENT ${'z'.repeat(chars)}` })
+    }
+    msgs.push({ id: 'af', role: 'assistant', createdAt: 4, content: 'I looked at them all.', status: 'done' })
+    for (const m of msgs) store.upsertMessage(convId, m)
+  }
+
+  it('summarizes the older steps of a long task instead of dropping them, and the model carries on from the summary', async () => {
+    const { runner, conv } = await setup(
+      [readCall('one'), readCall('two'), readCall('three'), { text: [SUMMARY] }, { text: ['All done.'] }],
+      { contextTokens: 8192 }
+    )
+    await runner.send({ conversationId: conv.id, text: 'Read the four files for me.' })
+    expect((await waitEnd(conv.id)).outcome).toBe('done')
+
+    // Requests: three file reads, one to write the summary, then the answer.
+    expect(server!.requests).toHaveLength(5)
+    const asked = server!.requests[3]
+    expect(asked.messages[0].content).toMatch(/compress the middle/)
+    expect(asked.tools?.length ?? 0).toBe(0)
+    expect(asked.messages[1].content).toContain('ONE-MARKER')
+    expect(asked.messages[1].content).toContain('Write the updated summary')
+
+    const c = store.get(conv.id)!
+    expect(c.compaction).toMatchObject({ source: 'model', rounds: 1, toolCalls: 2 })
+    expect(c.compaction!.narrative).toMatch(/^Goal: read all four files/)
+    expect(c.compaction!.ledger.map((e) => e.t)).toEqual(['one.txt', 'two.txt'])
+    expect(c.compaction!.tokensAfter).toBeLessThan(c.compaction!.tokensBefore)
+    // Nothing is deleted: the transcript still has every step.
+    expect(c.messages.filter((m) => m.role === 'tool')).toHaveLength(3)
+
+    // What the model was sent: the summary in the user's seat, then only the last exchange, in an order a strict template accepts.
+    const sent = server!.requests[4].messages
+    expect(sent.map((m: { role: string }) => m.role)).toEqual(['system', 'user', 'assistant', 'tool'])
+    expect(sent[1].content).toContain('Earlier in this conversation')
+    expect(sent[1].content).toContain('Goal: read all four files')
+    expect(sent[1].content).toContain('Files read: one.txt; two.txt')
+    expect(sent[1].content).toContain('Read the four files for me.')
+    expect(sent[3].content).toContain('THREE-MARKER')
+    // The earlier file contents are gone from what the model reads; only the summary's account of them remains.
+    expect(sent.filter((m: { role: string }) => m.role === 'tool')).toHaveLength(1)
+    expect(sent[1].content.match(/ONE-MARKER/g)).toHaveLength(1)
+
+    expect(events.some((e) => e.type === 'compaction' && e.compaction?.source === 'model')).toBe(true)
+    expect(events.some((e) => e.type === 'status' && /Summarizing/.test(e.status))).toBe(true)
+    expect(events.filter((e) => e.type === 'context').length).toBeGreaterThanOrEqual(4)
+
+    // It is saved with the chat.
+    await store.flush()
+    const again = new ConversationStore(path.join(dir, 'conv'))
+    await again.init()
+    expect(again.get(conv.id)!.compaction?.upToMessageId).toBe(c.compaction!.upToMessageId)
+  })
+
+  it('keeps the list of tool calls when the model cannot write the summary, and the task goes on', async () => {
+    const { runner, conv } = await setup(
+      [readCall('one'), readCall('two'), readCall('three'), { error: { status: 500, body: { error: { message: 'out of memory' } } } }, { text: ['All done.'] }],
+      { contextTokens: 8192 }
+    )
+    await runner.send({ conversationId: conv.id, text: 'Read the files.' })
+    expect((await waitEnd(conv.id)).outcome).toBe('done')
+    const c = store.get(conv.id)!
+    expect(c.compaction).toMatchObject({ source: 'ledger', narrative: '' })
+    expect(c.messages.at(-1)!.content).toBe('All done.')
+    const sent = server!.requests[4].messages[1].content
+    expect(sent).toContain('Files read: one.txt; two.txt')
+    expect(sent).not.toMatch(/\nGoal:/)
+  })
+
+  it('trims as before when automatic summaries are switched off', async () => {
+    settings.chat.autoCompact = false
+    const { runner, conv } = await setup([readCall('one'), readCall('two'), readCall('three'), { text: ['All done.'] }], { contextTokens: 8192 })
+    await runner.send({ conversationId: conv.id, text: 'Read the files.' })
+    expect((await waitEnd(conv.id)).outcome).toBe('done')
+    expect(server!.requests).toHaveLength(4)
+    expect(store.get(conv.id)!.compaction).toBeUndefined()
+    expect(events.some((e) => e.type === 'compaction')).toBe(false)
+  })
+
+  it('when the server says the request does not fit, summarizes harder and asks again instead of failing', async () => {
+    const { runner, conv } = await setup(
+      [{ error: { status: 400, body: { error: { message: 'the request exceeds the available context size, try increasing it' } } } }, { text: [SUMMARY] }, { text: ['Here is my answer.'] }],
+      { contextTokens: 8192 }
+    )
+    seedHistory(conv.id, 2, 2000)
+    await runner.send({ conversationId: conv.id, text: 'And what did you find?' })
+    const end = await waitEnd(conv.id)
+    expect(end.outcome).toBe('done')
+    expect(server!.requests).toHaveLength(3)
+    const c = store.get(conv.id)!
+    expect(c.compaction).toBeDefined()
+    expect(c.messages.some((m) => m.status === 'error')).toBe(false)
+    expect(c.messages.at(-1)!.content).toBe('Here is my answer.')
+    expect(server!.requests[2].messages[1].content).toContain('Earlier in this conversation')
+  })
+
+  it('learns the real token count from the server and shows how full the memory is', async () => {
+    const { runner, conv } = await setup([{ text: ['Hi'], usage: { prompt: 1800, completion: 40 } }], { contextTokens: 8192 })
+    await runner.send({ conversationId: conv.id, text: 'hello' })
+    await waitEnd(conv.id)
+    const ctx = events.filter((e) => e.type === 'context').at(-1)
+    expect(ctx).toMatchObject({ usage: { used: 1840, window: 8192 } })
+    expect(store.get(conv.id)!.contextUsage).toMatchObject({ used: 1840, window: 8192 })
+  })
+
+  it('"summarize now" shortens a chat on request, and can be undone', async () => {
+    const { runner, conv } = await setup([{ text: [SUMMARY] }], { contextTokens: 8192 })
+    seedHistory(conv.id, 3, 2400)
+    await runner.compactNow(conv.id)
+    expect((await waitEnd(conv.id)).outcome).toBe('done')
+    const c = store.get(conv.id)!
+    expect(c.compaction).toMatchObject({ source: 'model', rounds: 1 })
+    expect(c.compaction!.ledger.map((e) => e.t)).toContain('old0.ts')
+    expect(c.messages).toHaveLength(8)
+    expect(events.some((e) => e.type === 'compaction' && !!e.compaction)).toBe(true)
+
+    runner.uncompact(conv.id)
+    expect(store.get(conv.id)!.compaction).toBeUndefined()
+    const last = events.filter((e) => e.type === 'compaction').at(-1) as Extract<ChatEvent, { type: 'compaction' }>
+    expect(last.conversationId).toBe(conv.id)
+    expect(last.compaction).toBeUndefined()
+  })
+
+  it('"summarize now" says so when there is not enough chat to summarize', async () => {
+    const { runner, conv } = await setup([{ text: ['x'] }], { contextTokens: 8192 })
+    await expect(runner.compactNow(conv.id)).rejects.toThrow(/not enough earlier conversation/)
+    seedHistory(conv.id, 0)
+    await expect(runner.compactNow(conv.id)).rejects.toThrow(/not enough earlier conversation/)
+  })
+
+  it('drops a summary that belongs to messages which were removed, and sends the chat as it is', async () => {
+    const { runner, conv } = await setup([{ text: ['Fine.'] }], { contextTokens: 8192 })
+    store.get(conv.id)!.compaction = { narrative: 'Goal: stale.', asks: [], ledger: [], upToMessageId: 'removed', messages: 4, toolCalls: 0, tokensBefore: 10, tokensAfter: 5, createdAt: 1, source: 'model', rounds: 1 }
+    await runner.send({ conversationId: conv.id, text: 'hello again' })
+    await waitEnd(conv.id)
+    expect(store.get(conv.id)!.compaction).toBeUndefined()
+    expect(JSON.stringify(server!.requests[0].messages)).not.toContain('stale')
   })
 })
