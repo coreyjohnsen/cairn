@@ -45,6 +45,8 @@ export interface RemoteServerDeps {
   clientDir: string
   events: EventSource
   appVersion: string
+  /** Extra host names this server is reached by (a tunnel or domain set up in the settings), besides the one in the request. */
+  extraHosts?: () => string[]
   onPaired?(device: RemoteDevice): void
   /** A device connected or disconnected its live channel. */
   onPresence?(): void
@@ -91,6 +93,15 @@ class HttpError extends Error {
     message: string
   ) {
     super(message)
+  }
+}
+
+/** Reads what a page sent as JSON; anything else is a plain "bad request", not a crash. */
+function parse<T>(text: string): T {
+  try {
+    return decodeJson<T>(text)
+  } catch {
+    throw new HttpError(400, 'That request could not be read.')
   }
 }
 
@@ -240,7 +251,10 @@ export class RemoteServer {
     } catch {
       /* fall through */
     }
-    if (!host || host !== req.headers.host) throw new HttpError(403, 'Blocked: this request came from another website.')
+    // The page's own address: as the request names it, as a tunnel in front of this server says it was reached, or the address set in the settings.
+    const forwarded = String(req.headers['x-forwarded-host'] ?? '').split(',')[0].trim()
+    const mine = [req.headers.host, forwarded, ...(this.d.extraHosts?.() ?? [])].filter(Boolean)
+    if (!host || !mine.includes(host)) throw new HttpError(403, 'Blocked: this request came from another website.')
   }
 
   private cookieHeader(req: http.IncomingMessage, token: string, maxAge = COOKIE_MAX_AGE): string {
@@ -259,7 +273,7 @@ export class RemoteServer {
 
     if (p === '/remote/pair' && method === 'POST') {
       this.sameOrigin(req)
-      const body = decodeJson<{ code?: unknown; name?: unknown }>(await readBody(req, MAX_PAIR_BODY))
+      const body = parse<{ code?: unknown; name?: unknown }>(await readBody(req, MAX_PAIR_BODY))
       const ip = this.clientOf(req)
       const r = this.d.pairing.redeem(body?.code, ip)
       if (!r.ok) {
@@ -294,7 +308,7 @@ export class RemoteServer {
       const dev = this.requireDevice(req)
       const handlers = this.d.handlers()
       if (!handlers) throw new HttpError(503, 'Cairn is still starting. Try again in a moment.')
-      const body = decodeJson<{ channel?: unknown; args?: unknown }>(await readBody(req, MAX_BODY))
+      const body = parse<{ channel?: unknown; args?: unknown }>(await readBody(req, MAX_BODY))
       try {
         const result = await dispatchRemote(handlers, dev.scopes, body?.channel, body?.args)
         return this.json(res, 200, { ok: true, result: result === undefined ? null : result })

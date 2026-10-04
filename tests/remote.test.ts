@@ -548,6 +548,21 @@ describe('companion server', () => {
     expect(ok.status).toBe(200)
   })
 
+  it('lets a tunnel or domain in front of the server through, and nothing else', async () => {
+    const cookie = await pairBrowser()
+    const send = (origin: string, extra: Record<string, string> = {}) => fetch(`${base}/remote/rpc`, { method: 'POST', headers: { cookie, origin, ...extra }, body: encodeJson({ channel: 'chat:active', args: [] }) })
+    expect((await send('https://cairn.example.com', { 'x-forwarded-host': 'cairn.example.com' })).status).toBe(200)
+    expect((await send('https://evil.example', { 'x-forwarded-host': 'cairn.example.com' })).status).toBe(403)
+  })
+
+  it('answers a request it cannot read with a plain error', async () => {
+    const res = await fetch(`${base}/remote/pair`, { method: 'POST', body: '{not json' })
+    expect(res.status).toBe(400)
+    const cookie = await pairBrowser()
+    const rpcRes = await fetch(`${base}/remote/rpc`, { method: 'POST', headers: { cookie }, body: 'nope' })
+    expect(rpcRes.status).toBe(400)
+  })
+
   it('runs allowed requests and carries pictures as bytes', async () => {
     const cookie = await pairBrowser()
     const listed = await rpc(cookie, 'conversations:list')

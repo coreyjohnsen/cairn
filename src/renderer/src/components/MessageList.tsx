@@ -10,7 +10,7 @@ import { SummaryModal } from './ContextMeter'
 import { Markdown } from './Markdown'
 import { ToolCard } from './ToolCard'
 import { ImageProgress } from './ImageProgress'
-import { IconButton } from './ui'
+import { Button, IconButton, Modal } from './ui'
 
 /* ───────────── pieces ───────────── */
 
@@ -27,19 +27,64 @@ function ImageGrid({ images }: { images: ImageRef[] }) {
   )
 }
 
+/** A text or code file sent with a message. Tapping it shows what the model read, with a copy button and a way to save it. */
+function FileChip({ a }: { a: Attachment }) {
+  const [open, setOpen] = useState(false)
+  const text = a.text
+  const save = () => {
+    const url = URL.createObjectURL(new Blob([text ?? ''], { type: a.mime || 'text/plain' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = a.name
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 2000)
+  }
+  const body = (
+    <>
+      <FileText size={14} />
+      <span className="ellipsis">{a.name}</span>
+      <span className="faint xs">{formatBytes(a.size)}</span>
+    </>
+  )
+  if (text === undefined) {
+    return (
+      <span className="att-file" title={a.name}>
+        {body}
+      </span>
+    )
+  }
+  return (
+    <>
+      <button type="button" className="att-file openable" title={`Show ${a.name}`} onClick={() => setOpen(true)}>
+        {body}
+      </button>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={a.name}
+        width={760}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => void navigator.clipboard.writeText(text)}>
+              Copy
+            </Button>
+            <Button onClick={save}>Save a copy</Button>
+          </>
+        }
+      >
+        <pre className="att-text selectable">{text}</pre>
+      </Modal>
+    </>
+  )
+}
+
 function AttachmentChips({ items }: { items: Attachment[] }) {
   return (
     <div className="msg-attachments">
       {items.map((a) =>
-        a.kind === 'image' ? (
-          <img key={a.id} className="att-thumb" src={mediaUrl('attachment', a.file)} alt={a.name} title={a.name} draggable={false} />
-        ) : (
-          <span key={a.id} className="att-file" title={a.name}>
-            <FileText size={14} />
-            <span className="ellipsis">{a.name}</span>
-            <span className="faint xs">{formatBytes(a.size)}</span>
-          </span>
-        )
+        a.kind === 'image' ? <img key={a.id} className="att-thumb" src={mediaUrl('attachment', a.file)} alt={a.name} title={a.name} draggable={false} /> : <FileChip key={a.id} a={a} />
       )}
     </div>
   )

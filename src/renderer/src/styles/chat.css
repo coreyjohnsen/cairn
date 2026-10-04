@@ -362,6 +362,28 @@
   background: color-mix(in srgb, var(--bg-0) 55%, transparent);
   font-size: 0.85rem;
 }
+.att-file.openable {
+  cursor: pointer;
+  text-align: left;
+  border: 1px solid var(--line);
+}
+.att-file.openable:hover {
+  border-color: var(--accent-line);
+}
+.att-text {
+  margin: 0;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .run-status {
   display: flex;
   align-items: center;

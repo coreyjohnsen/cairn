@@ -1,6 +1,6 @@
 import path from 'node:path'
 import type { RemoteDevice, RemotePairing, RemoteScopes, RemoteSettings, RemoteStatus, RemoteState } from '@shared/types'
-import { formatPairCode } from '@shared/remotePrefs'
+import { formatPairCode, normalizePublicUrl } from '@shared/remotePrefs'
 import type { EventChannel, IpcEventMap } from '@shared/ipc'
 import fs from 'node:fs'
 import { addEventSink, emit } from '../events'
@@ -53,6 +53,10 @@ export class RemoteService {
       clientDir: d.clientDir,
       appVersion: d.appVersion,
       events: (listener) => addEventSink(listener as <K extends EventChannel>(c: K, p: IpcEventMap[K]) => void),
+      extraHosts: () => {
+        const u = normalizePublicUrl(d.getSettings().publicUrl)
+        return u ? [new URL(u).host] : []
+      },
       onPaired: (device) => {
         emit('remote:paired', device)
         this.publish(true)
