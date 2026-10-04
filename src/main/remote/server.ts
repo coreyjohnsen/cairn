@@ -72,7 +72,7 @@ const SECURITY_HEADERS: Record<string, string> = {
   'Referrer-Policy': 'no-referrer',
   'X-Frame-Options': 'DENY',
   // The page and its own assets only; pictures can come from this server or be made on the phone (blob, data).
-  'Content-Security-Policy': "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 }
 
 function parseCookies(header: string | undefined): Record<string, string> {
@@ -112,6 +112,8 @@ interface SseClient {
   deviceId: string
   buf: string[]
   timer: NodeJS.Timeout | null
+  /** What this device was last told it may do, so a change on the computer reaches it. */
+  scopes: string
 }
 
 export class RemoteServer {
@@ -119,6 +121,7 @@ export class RemoteServer {
   private sockets = new Set<Socket>()
   private clients = new Set<SseClient>()
   private stopEvents: (() => void) | null = null
+  private stopDevices: (() => void) | null = null
   private heartbeat: NodeJS.Timeout | null = null
   private badTokens = new Map<string, { n: number; reset: number }>()
   port: number | null = null
@@ -149,6 +152,7 @@ export class RemoteServer {
         this.server = server
         this.port = (server.address() as AddressInfo | null)?.port ?? port
         this.stopEvents = this.d.events((channel, payload) => this.broadcast(channel, payload))
+        this.stopDevices = this.d.devices.onChange(() => this.tellScopes())
         this.heartbeat = setInterval(() => this.ping(), HEARTBEAT_MS)
         this.heartbeat.unref?.()
         resolve()
@@ -159,6 +163,8 @@ export class RemoteServer {
   async close(): Promise<void> {
     this.stopEvents?.()
     this.stopEvents = null
+    this.stopDevices?.()
+    this.stopDevices = null
     if (this.heartbeat) clearInterval(this.heartbeat)
     this.heartbeat = null
     for (const c of [...this.clients]) this.dropClient(c)
@@ -336,7 +342,7 @@ export class RemoteServer {
     req.socket.setKeepAlive(true, 15_000)
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' })
     res.write(`retry: 3000\n\n`)
-    const client: SseClient = { res, deviceId: dev.id, buf: [], timer: null }
+    const client: SseClient = { res, deviceId: dev.id, buf: [], timer: null, scopes: JSON.stringify(dev.scopes) }
     this.clients.add(client)
     this.send(client, 'hello', { at: Date.now() })
     this.d.onPresence?.()
@@ -373,6 +379,18 @@ export class RemoteServer {
       c.res.write(text)
     } catch {
       this.dropClient(c)
+    }
+  }
+
+  /** A device whose permissions changed on the computer is told, so its screens match what it may now do. */
+  private tellScopes(): void {
+    for (const c of this.clients) {
+      const dev = this.d.devices.get(c.deviceId)
+      if (!dev) continue
+      const now = JSON.stringify(dev.scopes)
+      if (now === c.scopes) continue
+      c.scopes = now
+      this.send(c, 'scopes', dev.scopes)
     }
   }
 

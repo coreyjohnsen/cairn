@@ -157,6 +157,17 @@ describe('phone transport against the real server', () => {
     expect(got[2]).toBe('conversations:removed:"c_7"')
   })
 
+  it('hears about permission changes made on the computer', async () => {
+    const seen: unknown[] = []
+    const t = make({ onScopes: (s) => seen.push(s) })
+    await t.pair(pairing.create().code)
+    t.connect()
+    await until(() => t.live)
+    devices.update(devices.list()[0].id, { scopes: { tools: true } })
+    await until(() => seen.length === 1)
+    expect(seen[0]).toEqual({ images: true, tools: true })
+  })
+
   it('reconnects by itself after the computer restarts, and says it is a return', async () => {
     const live: boolean[] = []
     let offline = 0

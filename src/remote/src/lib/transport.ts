@@ -34,6 +34,8 @@ export interface TransportOptions {
   /** The live stream came up (`again` is true after the first time: time to catch up on what was missed). */
   onLive?(again: boolean): void
   onOffline?(): void
+  /** What this device may do was changed on the computer. */
+  onScopes?(scopes: RemoteScopes): void
   /** The computer no longer knows this device. */
   onAuthLost?(): void
   /** How long the stream may stay silent before it is considered dead. The computer pings every 20 seconds. */
@@ -199,7 +201,8 @@ export class RemoteTransport {
                 const again = this.opened
                 this.opened = true
                 this.o.onLive?.(again)
-              } else this.o.onEvent?.(msg.c as EventChannel, msg.p as never)
+              } else if (msg.c === 'scopes') this.o.onScopes?.(msg.p as RemoteScopes)
+              else this.o.onEvent?.(msg.c as EventChannel, msg.p as never)
             }
           }
         }

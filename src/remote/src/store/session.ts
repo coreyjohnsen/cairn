@@ -32,6 +32,11 @@ export const transport = new RemoteTransport({
     if (again) void resync()
   },
   onOffline: () => useSession.setState({ live: false }),
+  // Pictures or tools were switched on or off on the computer: start over so every screen matches.
+  onScopes: (scopes) => {
+    const cur = useSession.getState().session?.device.scopes
+    if (cur && (cur.images !== scopes.images || cur.tools !== scopes.tools)) location.reload()
+  },
   onAuthLost: () => useSession.setState({ phase: 'unpaired', session: null, live: false, pairError: 'This phone was signed out from the computer. Scan the code again to reconnect.' })
 })
 export const bridge = createBridge(transport)

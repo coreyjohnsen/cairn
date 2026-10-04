@@ -1,5 +1,6 @@
-import { Layers, MessagesSquare, MountainSnow, SlidersHorizontal, Wrench } from 'lucide-react'
+import { Layers, MessagesSquare, MountainSnow, SlidersHorizontal, Smartphone, Wrench } from 'lucide-react'
 import { useEffect } from 'react'
+import { ConnectPhone } from '@/components/ConnectPhone'
 import { Logo } from '@/components/Logo'
 import { Toasts } from '@/components/ui'
 import { Lightbox } from '@/components/Lightbox'
@@ -16,6 +17,7 @@ import { useChat } from '@/store/chat'
 import { useImages } from '@/store/images'
 import { useLayout } from '@/store/layout'
 import { useLibrary } from '@/store/library'
+import { useRemote } from '@/store/remote'
 
 const NAV: { id: ViewId; label: string; icon: typeof Layers }[] = [
   { id: 'chat', label: 'Chat', icon: MessagesSquare },
@@ -48,13 +50,15 @@ export function App() {
   const llama = useLibrary((s) => s.llama)
   const running = useChat((s) => Object.values(s.running).some(Boolean))
   const jobs = useImages((s) => Object.values(s.jobs).filter((j) => j.status === 'running' || j.status === 'queued').length)
+  const phones = useRemote((s) => s.status?.devices.filter((d) => d.online).length ?? 0)
+  const companion = useRemote((s) => s.status)
 
   useEffect(() => {
     document.documentElement.dataset.platform = platform()
     void useApp
       .getState()
       .init()
-      .then(() => Promise.all([useChat.getState().init(), useImages.getState().init(), useLibrary.getState().init()]))
+      .then(() => Promise.all([useChat.getState().init(), useImages.getState().init(), useLibrary.getState().init(), useRemote.getState().init()]))
       .catch((e) => console.error('Startup failed', e))
   }, [])
 
@@ -108,6 +112,12 @@ export function App() {
           ))}
         </div>
         <div className="rail-foot">
+          {companion && (
+            <button className="rail-btn tip-right" data-tip={phones ? `Connect your phone · ${phones} connected` : 'Connect your phone'} aria-label="Connect your phone" onClick={() => useRemote.getState().show()}>
+              <Smartphone size={20} strokeWidth={1.7} />
+              {phones > 0 && <span className="rail-pulse" />}
+            </button>
+          )}
           {llamaTip && <span className={cx('rail-dot', `st-${llama.state}`)} title={llamaTip} />}
           <button className={cx('rail-btn', 'tip-right', view === 'settings' && 'on')} data-tip="Settings" aria-label="Settings" onClick={() => setView('settings')}>
             <SlidersHorizontal size={20} strokeWidth={1.7} />
@@ -125,6 +135,7 @@ export function App() {
         </div>
       </main>
       <Lightbox />
+      <ConnectPhone />
       <Onboarding />
       <Toasts items={toasts} dismiss={dismiss} />
     </div>

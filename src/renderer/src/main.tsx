@@ -9,6 +9,7 @@ import './styles/layout.css'
 import './styles/chat.css'
 import './styles/hub.css'
 import './styles/pages.css'
+import './styles/connect.css'
 import { App } from './App'
 
 async function start() {

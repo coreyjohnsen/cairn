@@ -630,6 +630,34 @@ describe('companion server', () => {
     await until(() => !server.isOnline(devices.list()[0].id))
   })
 
+  it('tells a device when its permissions change on the computer', async () => {
+    const cookie = await pairBrowser()
+    const res = await fetch(`${base}/remote/events`, { headers: { cookie } })
+    const reader = res.body!.getReader()
+    const dec = new TextDecoder()
+    let text = ''
+    void (async () => {
+      try {
+        for (;;) {
+          const { value, done } = await reader.read()
+          if (done) return
+          text += dec.decode(value)
+        }
+      } catch {
+        /* closed */
+      }
+    })()
+    await until(() => text.includes('"hello"'))
+    // A rename is not a permission change: nothing is sent.
+    devices.update(devices.list()[0].id, { name: 'Renamed' })
+    await sleep(80)
+    expect(text).not.toContain('"scopes"')
+    devices.update(devices.list()[0].id, { scopes: { images: false } })
+    await until(() => text.includes('"c":"scopes"'))
+    expect(text).toContain('"images":false')
+    await reader.cancel()
+  })
+
   it('cuts a device off the moment it is signed out', async () => {
     const cookie = await pairBrowser()
     const id = devices.list()[0].id

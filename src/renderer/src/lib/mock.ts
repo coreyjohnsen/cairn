@@ -22,6 +22,8 @@ import type {
   ImageTargetOption,
   LlamaStatus,
   ModelOption,
+  RemoteDevice,
+  RemoteStatus,
   ServerStatus,
   Settings,
   ToolInfo
@@ -165,6 +167,7 @@ const modelsAll: ModelOption[] = onboarding
 const settings: Settings = (() => {
   const s = defaultSettings('/home/corey/.cairn/models')
   s.onboardingDismissed = !onboarding
+  s.remote.enabled = q.get('remote') === 'on'
   s.defaultModel = modelsAll[0]?.ref ?? ''
   s.agent.workspace = '/home/corey/projects/alpine-notes'
   s.providers.push(
@@ -379,6 +382,28 @@ function serverStatus(): ServerStatus {
 function emit<K extends EventChannel>(channel: K, payload: IpcEventMap[K]): void {
   listeners.get(channel)?.forEach((l) => (l as (p: IpcEventMap[K]) => void)(payload))
 }
+
+/* ───────────── phone companion ───────────── */
+
+const remoteDevices: RemoteDevice[] = q.get('devices') === 'none' ? [] : [
+  { id: 'd1', name: 'iPhone · Safari', createdAt: Date.now() - 9 * 86_400_000, lastSeenAt: Date.now() - 40_000, lastAddress: '192.168.1.41', scopes: { images: true, tools: false }, online: true },
+  { id: 'd2', name: 'Pixel tablet', createdAt: Date.now() - 30 * 86_400_000, lastSeenAt: Date.now() - 3 * 3_600_000, lastAddress: '100.101.4.7', scopes: { images: true, tools: true }, online: false }
+]
+const remoteAddresses = () => [
+  { label: 'Same Wi-Fi', url: `http://192.168.1.24:${settings.remote.port}`, kind: 'lan' as const },
+  { label: 'Tailscale · anywhere', url: `http://100.88.12.5:${settings.remote.port}`, kind: 'tailscale' as const }
+]
+function remoteStatus(): RemoteStatus {
+  const on = settings.remote.enabled
+  return { state: on ? 'running' : 'stopped', port: on ? settings.remote.port : undefined, addresses: on ? remoteAddresses() : [], devices: remoteDevices.map((d) => ({ ...d })), awake: on && settings.remote.keepAwake, missingClient: false }
+}
+/** For screenshots: pretend a phone just used the code. */
+;(window as unknown as { __demoPaired: () => void }).__demoPaired = () => {
+  const d: RemoteDevice = { id: `d${remoteDevices.length + 1}`, name: 'Corey’s iPhone', createdAt: Date.now(), lastSeenAt: Date.now(), lastAddress: '192.168.1.57', scopes: { images: true, tools: false }, online: true }
+  remoteDevices.unshift(d)
+  emit('remote:paired', d)
+  emit('remote:status', remoteStatus())
+}
 const chatEvent = (e: ChatEvent) => emit('chat:event', e)
 
 /* ───────────── scripted chat runs ───────────── */
@@ -489,9 +514,29 @@ const handlers: Handlers = {
   'settings:update': (patch) => {
     Object.assign(settings, patch)
     if (patch.server) emit('server:status', serverStatus())
+    if (patch.remote) setTimeout(() => emit('remote:status', remoteStatus()), 350)
     return { ...settings }
   },
   'server:status': () => serverStatus(),
+  'remote:status': () => remoteStatus(),
+  'remote:pair': () => {
+    const code = 'K7QM4TXD'
+    return { code: 'K7QM-4TXD', expiresAt: Date.now() + (q.get('expiring') ? 6_000 : 5 * 60_000), links: remoteAddresses().map((a) => ({ label: a.label, kind: a.kind, url: `${a.url}/#pair=${code}` })) }
+  },
+  'remote:cancelPair': () => undefined,
+  'remote:updateDevice': (id, patch) => {
+    const d = remoteDevices.find((x) => x.id === id)
+    if (!d) return null
+    if (patch.name) d.name = patch.name
+    if (patch.scopes) d.scopes = { ...d.scopes, ...patch.scopes }
+    emit('remote:status', remoteStatus())
+    return { ...d }
+  },
+  'remote:removeDevice': (id) => {
+    const i = remoteDevices.findIndex((x) => x.id === id)
+    if (i >= 0) remoteDevices.splice(i, 1)
+    emit('remote:status', remoteStatus())
+  },
   'server:models': () => {
     const sv = settings.server
     const row = (id: string, name: string, type: 'chat' | 'image', key: string, available = true, detail?: string) => ({ id, name, type, key, exposed: sv.exposeAll || (type === 'chat' ? sv.chatModels : sv.imageModels).includes(key), available, detail })

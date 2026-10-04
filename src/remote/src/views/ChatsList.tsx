@@ -15,6 +15,17 @@ function shortTime(ts: number): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+/** The preview line without Markdown marks, so a reply does not show up as "**bold** - list". */
+export function plainPreview(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^[\s>#*+-]+/gm, '')
+    .replace(/[*_`~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function Row({ c, active, running, onOpen }: { c: ConversationSummary; active: boolean; running: boolean; onOpen: () => void }) {
   return (
     <button type="button" className={cx('chat-row', active && 'on')} onClick={onOpen}>
@@ -23,7 +34,7 @@ function Row({ c, active, running, onOpen }: { c: ConversationSummary; active: b
           {c.pinned && <Pin size={12} className="chat-row-pin" />}
           <span className="ellipsis">{c.title}</span>
         </span>
-        <span className="chat-row-preview ellipsis">{c.preview || 'No messages yet'}</span>
+        <span className="chat-row-preview ellipsis">{plainPreview(c.preview) || 'No messages yet'}</span>
       </span>
       <span className="chat-row-side">
         {running ? <span className="dot-pulse small" aria-label="Working" /> : <span className="faint xs">{shortTime(c.updatedAt)}</span>}
