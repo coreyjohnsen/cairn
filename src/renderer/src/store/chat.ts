@@ -88,7 +88,26 @@ export const useChat = create<ChatState>()((set, get) => {
     async init() {
       on('chat:event', (e) => get().handle(e))
       on('conversations:changed', (summary) => {
-        set((s) => ({ list: sortList([summary, ...s.list.filter((c) => c.id !== summary.id)]) }))
+        const s = get()
+        const cached = s.cache[summary.id]
+        // Another window (or a paired phone) cut messages off this chat: read it again instead of showing what is gone.
+        const stale = !!cached && !s.running[summary.id] && cached.messages.filter((m) => m.role !== 'tool').length !== summary.messageCount
+        set((st) => ({
+          list: sortList([summary, ...st.list.filter((c) => c.id !== summary.id)]),
+          cache: cached && !stale ? { ...st.cache, [summary.id]: { ...cached, title: summary.title, pinned: summary.pinned } } : st.cache
+        }))
+        if (stale) {
+          invoke('conversations:get', summary.id)
+            .then((conv) => conv && set((st) => ({ cache: { ...st.cache, [summary.id]: conv } })))
+            .catch(() => {})
+        }
+      })
+      on('conversations:removed', (id) => {
+        set((s) => {
+          const { [id]: _gone, ...cache } = s.cache
+          const list = s.list.filter((c) => c.id !== id)
+          return { cache, list, activeId: s.activeId === id ? null : s.activeId }
+        })
       })
       const [list, active] = await Promise.all([invoke('conversations:list'), invoke('chat:active')])
       set({ list: sortList(list), running: Object.fromEntries(active.map((id) => [id, true])) })
