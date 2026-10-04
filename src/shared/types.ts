@@ -286,6 +286,8 @@ export interface SendRequest {
   attachments?: AttachmentInput[]
   /** 'image' sends the text straight to the image generator. */
   mode?: 'chat' | 'image'
+  /** Run this reply without tools, whatever the chat says. Set by the host for phones that may not use tools. */
+  noTools?: boolean
 }
 
 /* ───────────────────────────── Tools ───────────────────────────── */
@@ -814,6 +816,7 @@ export interface Settings {
   local: LocalRuntimeSettings
   image: ImageSettings
   server: ServerSettings
+  remote: RemoteSettings
   paths: PathSettings
   onboardingDismissed: boolean
 }
@@ -878,6 +881,70 @@ export interface ServerStatus {
   total: number
   startedAt?: number
   recent: ServerLogEntry[]
+}
+
+/* ───────────────────────────── Companion (phones and tablets) ───────────────────────────── */
+
+/** Lets paired phones and tablets use this computer's chats, pictures and models from a web page. */
+export interface RemoteSettings {
+  /** Serve the companion web app (and start again whenever Cairn starts). */
+  enabled: boolean
+  port: number
+  /** An address to put in the QR code instead of the detected ones, for a Tailscale name, a tunnel or a domain. */
+  publicUrl: string
+  /** Stop the computer from sleeping while the companion is on, so the phone can always reach it. */
+  keepAwake: boolean
+}
+
+/** What a paired device may do besides chatting. Chatting with models is always allowed once paired. */
+export interface RemoteScopes {
+  /** See and make pictures. */
+  images: boolean
+  /** Let the assistant use tools (files, commands) in chats started from this device, and answer permission requests. */
+  tools: boolean
+}
+
+export interface RemoteDevice {
+  id: string
+  name: string
+  createdAt: number
+  lastSeenAt: number
+  /** Where it last connected from. */
+  lastAddress?: string
+  scopes: RemoteScopes
+  /** Has the live connection open right now. */
+  online: boolean
+}
+
+export interface RemoteAddress {
+  /** "Home Wi-Fi", "Tailscale", "Your address". */
+  label: string
+  /** The page a phone opens, such as http://192.168.1.20:8742 */
+  url: string
+  kind: 'lan' | 'tailscale' | 'custom'
+}
+
+export type RemoteState = 'stopped' | 'starting' | 'running' | 'error'
+
+export interface RemoteStatus {
+  state: RemoteState
+  error?: string
+  port?: number
+  addresses: RemoteAddress[]
+  devices: RemoteDevice[]
+  /** The computer is being kept awake right now. */
+  awake: boolean
+  /** The companion web app has not been built yet (a development checkout), so phones would see nothing. */
+  missingClient: boolean
+}
+
+/** A one-time pairing offer shown on this computer: scan the code or type it on the phone. */
+export interface RemotePairing {
+  /** The code in its short form, "K7QM-4TXD". */
+  code: string
+  expiresAt: number
+  /** One link per address; the phone's own camera opens it and signs in. */
+  links: { label: string; kind: RemoteAddress['kind']; url: string }[]
 }
 
 /* ───────────────────────────── System ───────────────────────────── */

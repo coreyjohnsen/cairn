@@ -1,3 +1,4 @@
+import path from 'node:path'
 import type { Settings, ToolPermission } from '@shared/types'
 import { ApprovalManager } from './agent/approvals'
 import { ChatRunner } from './agent/runner'
@@ -11,6 +12,7 @@ import { emit } from './events'
 import { ImageService } from './images/service'
 import { ImageStore } from './images/store'
 import { ModelService } from './models'
+import { RemoteService, type KeepAwake } from './remote/service'
 import { ApiServer, generateApiKey } from './server/api'
 import { initPaths, type AppPaths } from './paths'
 import { type Cipher, setCipher } from './secrets'
@@ -29,6 +31,13 @@ export interface ServiceOptions {
   startMcp?: boolean
   /** Start the API server when the settings turn it on (disabled in tests). */
   startServer?: boolean
+  /** Start the phone companion when the settings turn it on (disabled in tests). */
+  startRemote?: boolean
+  /** Folder with the built companion web app. */
+  remoteClientDir?: string
+  appVersion?: string
+  /** Stops the computer from sleeping while the companion is on (Electron in the app). */
+  keepAwake?: KeepAwake
 }
 
 export interface Services {
@@ -49,6 +58,8 @@ export interface Services {
   runner: ChatRunner
   /** Shares the local models with other programs. */
   api: ApiServer
+  /** Pairs phones and tablets and serves them the companion web app. */
+  remote: RemoteService
   shutdown(): Promise<void>
 }
 
@@ -130,12 +141,20 @@ export async function createServices(opts: ServiceOptions): Promise<Services> {
   })
 
   const api = new ApiServer({ getSettings: get, llama, local: localProvider, images, imageStore })
+  const remote = new RemoteService({
+    paths,
+    getSettings: () => get().remote,
+    clientDir: opts.remoteClientDir ?? path.join(paths.data, 'remote-client'),
+    appVersion: opts.appVersion ?? '',
+    keepAwake: opts.keepAwake
+  })
   const serving = opts.startServer !== false
+  const pairing = opts.startRemote !== false
   /** Turning the server on with a key required needs a key; make one so it is never open by accident. */
   const needsKey = (s: Settings) => s.server.enabled && s.server.requireKey && !s.server.apiKey
 
   // React to the parts of settings that have live side effects, ignoring unrelated edits.
-  const sig = (s: Settings) => ({ names: JSON.stringify(s.local.modelNames ?? {}), providers: JSON.stringify(s.providers), mcp: JSON.stringify(s.mcpServers), image: JSON.stringify(s.image), paths: JSON.stringify([s.paths.modelsDir, s.paths.extraModelDirs]), server: JSON.stringify(s.server) })
+  const sig = (s: Settings) => ({ names: JSON.stringify(s.local.modelNames ?? {}), providers: JSON.stringify(s.providers), mcp: JSON.stringify(s.mcpServers), image: JSON.stringify(s.image), paths: JSON.stringify([s.paths.modelsDir, s.paths.extraModelDirs]), server: JSON.stringify(s.server), remote: JSON.stringify(s.remote) })
   let last = sig(get())
   settings.onChange((s) => {
     if (serving && needsKey(s)) {
@@ -154,6 +173,7 @@ export async function createServices(opts: ServiceOptions): Promise<Services> {
       models.invalidate('local')
     }
     if (now.server !== last.server && serving) void api.apply()
+    if (now.remote !== last.remote && pairing) void remote.apply()
     if (now.mcp !== last.mcp) void mcp.sync().catch(() => {})
     last = now
   })
@@ -162,6 +182,8 @@ export async function createServices(opts: ServiceOptions): Promise<Services> {
     if (needsKey(get())) settings.update({ server: { ...get().server, apiKey: generateApiKey() } })
     void api.apply()
   }
+  await remote.load()
+  if (pairing && get().remote.enabled) void remote.apply()
 
   return {
     paths,
@@ -180,8 +202,10 @@ export async function createServices(opts: ServiceOptions): Promise<Services> {
     attachments,
     runner,
     api,
+    remote,
     async shutdown() {
       await api.close()
+      await remote.shutdown()
       runner.abortAll()
       downloads.cancelAll()
       await Promise.allSettled([mcp.closeAll(), llama.stop()])

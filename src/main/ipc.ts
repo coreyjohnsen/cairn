@@ -106,10 +106,13 @@ export function buildHandlers(s: Services, platform: PlatformApi): Handlers {
     'conversations:delete': async (id) => {
       s.runner.abort(id)
       await s.conversations.delete(id)
+      emit('conversations:removed', id)
     },
     'conversations:truncate': (id, fromMessageId) => {
       if (s.runner.isRunning(id)) throw new Error('Stop the current response first.')
-      return s.conversations.truncateFrom(id, fromMessageId)
+      const conv = s.conversations.truncateFrom(id, fromMessageId)
+      emit('conversations:changed', s.conversations.summary(conv))
+      return conv
     },
     'conversations:search': (q) => s.conversations.search(q),
     'conversations:export': async (id) => {
@@ -122,7 +125,7 @@ export function buildHandlers(s: Services, platform: PlatformApi): Handlers {
     },
 
     'chat:send': (req) => s.runner.send(req),
-    'chat:regenerate': (id) => s.runner.regenerate(id),
+    'chat:regenerate': (id, opts) => s.runner.regenerate(id, opts),
     'chat:abort': (id) => s.runner.abort(id),
     'chat:compact': (id) => s.runner.compactNow(id),
     'chat:uncompact': (id) => s.runner.uncompact(id),
@@ -294,8 +297,18 @@ export function buildHandlers(s: Services, platform: PlatformApi): Handlers {
       if (!['http:', 'https:', 'mailto:'].includes(u.protocol)) throw new Error('Only web and email links can be opened.')
       await platform.openExternal(u.toString())
     },
-    'system:setTitleBar': (colors) => platform.setTitleBar(colors)
+    'system:setTitleBar': (colors) => platform.setTitleBar(colors),
+
+    'remote:status': async () => {
+      await s.remote.load()
+      return s.remote.status()
+    },
+    'remote:pair': () => s.remote.pair(),
+    'remote:cancelPair': () => s.remote.cancelPair(),
+    'remote:updateDevice': (id, patch) => s.remote.updateDevice(id, patch),
+    'remote:removeDevice': (id) => s.remote.removeDevice(id)
   }
+  s.remote.attach(handlers)
   return handlers
 }
 

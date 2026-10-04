@@ -70,6 +70,8 @@ interface ActiveRun {
   controller: AbortController
   /** History budget (tokens) of the current request, used to size tool results. */
   budget?: number
+  /** This run may not use tools, whatever the chat says (a paired phone that has not been given tool access). */
+  noTools?: boolean
 }
 
 class RunError extends Error {}
@@ -141,7 +143,7 @@ export class ChatRunner {
       this.d.conversations.setAutoTitle(conv.id, first)
     }
 
-    const run = this.begin(conv)
+    const run = this.begin(conv, req.noTools)
     this.d.emit({ type: 'message', runId: run.runId, conversationId: conv.id, message: userMsg })
     void this.execute(run, async () => {
       const explicit = req.mode === 'image' || isExplicitImageCommand(text)
@@ -155,7 +157,7 @@ export class ChatRunner {
     return { runId: run.runId }
   }
 
-  async regenerate(conversationId: string): Promise<{ runId: string }> {
+  async regenerate(conversationId: string, opts?: { noTools?: boolean }): Promise<{ runId: string }> {
     const conv = this.d.conversations.get(conversationId)
     if (!conv) throw new Error('Conversation not found')
     if (this.runs.has(conv.id)) throw new Error('This chat is already generating a response.')
@@ -169,7 +171,7 @@ export class ChatRunner {
     if (lastUser < 0) throw new Error('There is no message to regenerate from.')
     conv.messages.splice(lastUser + 1)
     this.d.conversations.markDirty(conv.id)
-    const run = this.begin(conv)
+    const run = this.begin(conv, opts?.noTools)
     void this.execute(run, () => this.runAgent(run, conv.messages[lastUser].content))
     return { runId: run.runId }
   }
@@ -206,8 +208,8 @@ export class ChatRunner {
 
   /* ───────────────────────────── plumbing ───────────────────────────── */
 
-  private begin(conv: Conversation): ActiveRun {
-    const run: ActiveRun = { runId: newId('run_'), conv, controller: new AbortController() }
+  private begin(conv: Conversation, noTools?: boolean): ActiveRun {
+    const run: ActiveRun = { runId: newId('run_'), conv, controller: new AbortController(), noTools: noTools || undefined }
     this.runs.set(conv.id, run)
     this.d.emit({ type: 'run-start', runId: run.runId, conversationId: conv.id })
     return run
@@ -327,7 +329,7 @@ export class ChatRunner {
     const { option, provider } = resolved
 
     const imageAvailable = this.d.images.available()
-    const toolsWanted = conv.toolsEnabled && option.caps.tools !== false
+    const toolsWanted = conv.toolsEnabled && !run.noTools && option.caps.tools !== false
 
     // Models that cannot call tools still get "draw me a …" requests routed to the image generator.
     if (!toolsWanted && imageAvailable && settings.chat.detectImageIntent) {
@@ -338,7 +340,7 @@ export class ChatRunner {
       }
     }
 
-    const { toolImpls, toolDefs, system, params, thinking, budget, workspace } = this.prepare(conv, resolved)
+    const { toolImpls, toolDefs, system, params, thinking, budget, workspace } = this.prepare(conv, resolved, run.noTools)
     const toolMap = new Map(toolImpls.map((t) => [t.name, t]))
 
     run.budget = budget
@@ -525,10 +527,10 @@ export class ChatRunner {
   }
 
   /** Everything one request to the model is built from: the tools on offer, the system prompt, sampling and the room left for the chat. */
-  private prepare(conv: Conversation, resolved: ResolvedModel) {
+  private prepare(conv: Conversation, resolved: ResolvedModel, noTools?: boolean) {
     const settings = this.d.getSettings()
     const { option } = resolved
-    const toolsWanted = conv.toolsEnabled && option.caps.tools !== false
+    const toolsWanted = conv.toolsEnabled && !noTools && option.caps.tools !== false
     const toolImpls: ToolImpl[] = toolsWanted ? this.d.tools.forRun(this.d.images.available()) : []
     const toolDefs: ToolDef[] = toolImpls.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))
     const workspace = (conv.workspace || settings.agent.workspace || '').trim() || null

@@ -12,6 +12,7 @@ import {
 import { emit } from './events'
 import { mapSecrets, seal, unseal } from './secrets'
 import { sanitizeAliases, sanitizeLoraPresets, sanitizeModelDefaults } from '@shared/imagePrefs'
+import { sanitizeRemote } from '@shared/remotePrefs'
 import { sanitizeServer } from '@shared/serverPrefs'
 import { mergeDefaults, writeFileAtomic } from './util/fsx'
 
@@ -80,6 +81,7 @@ export class SettingsStore {
     s.image.loraPresets = sanitizeLoraPresets(s.image.loraPresets)
     s.image.modelDefaults = sanitizeModelDefaults(s.image.modelDefaults)
     s.server = sanitizeServer(s.server)
+    s.remote = sanitizeRemote(s.remote)
     return s
   }
 

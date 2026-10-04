@@ -29,6 +29,10 @@ import type {
   LocalModelFile,
   McpStatus,
   ModelOption,
+  RemotePairing,
+  RemoteScopes,
+  RemoteDevice,
+  RemoteStatus,
   OsPlatform,
   SendRequest,
   Settings,
@@ -56,7 +60,7 @@ export interface IpcInvokeMap {
   'conversations:export': { args: [id: string]; result: string | null }
 
   'chat:send': { args: [req: SendRequest]; result: { runId: string } }
-  'chat:regenerate': { args: [conversationId: string]; result: { runId: string } }
+  'chat:regenerate': { args: [conversationId: string, opts?: { noTools?: boolean }]; result: { runId: string } }
   'chat:abort': { args: [conversationId: string]; result: void }
   /** Summarize the older part of the chat now, to free the model's memory. */
   'chat:compact': { args: [conversationId: string]; result: void }
@@ -123,6 +127,14 @@ export interface IpcInvokeMap {
   'system:showItem': { args: [path: string]; result: void }
   'system:openExternal': { args: [url: string]; result: void }
   'system:setTitleBar': { args: [colors: { color: string; symbolColor: string }]; result: void }
+
+  /** The companion (phones and tablets): this computer's side. Never offered to a paired device. */
+  'remote:status': { args: []; result: RemoteStatus }
+  /** Start a one-time pairing offer: a code and links for the QR code. Replaces any earlier offer. */
+  'remote:pair': { args: []; result: RemotePairing }
+  'remote:cancelPair': { args: []; result: void }
+  'remote:updateDevice': { args: [id: string, patch: { name?: string; scopes?: Partial<RemoteScopes> }]; result: RemoteDevice | null }
+  'remote:removeDevice': { args: [id: string]; result: void }
 }
 
 /** Push channels (main → renderer). */
@@ -140,6 +152,11 @@ export interface IpcEventMap {
   'downloads:update': DownloadItem
   'mcp:status': McpStatus[]
   'conversations:changed': ConversationSummary
+  /** A chat was deleted. */
+  'conversations:removed': string
+  'remote:status': RemoteStatus
+  /** A phone used the pairing code: close the QR code window. */
+  'remote:paired': RemoteDevice
 }
 
 export type InvokeChannel = keyof IpcInvokeMap
@@ -216,7 +233,12 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'system:openPath',
   'system:showItem',
   'system:openExternal',
-  'system:setTitleBar'
+  'system:setTitleBar',
+  'remote:status',
+  'remote:pair',
+  'remote:cancelPair',
+  'remote:updateDevice',
+  'remote:removeDevice'
 ]
 
 export const EVENT_CHANNELS: EventChannel[] = [
@@ -232,7 +254,10 @@ export const EVENT_CHANNELS: EventChannel[] = [
   'server:status',
   'downloads:update',
   'mcp:status',
-  'conversations:changed'
+  'conversations:changed',
+  'conversations:removed',
+  'remote:status',
+  'remote:paired'
 ]
 
 export interface CairnApi {
