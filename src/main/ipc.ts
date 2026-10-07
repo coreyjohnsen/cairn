@@ -7,6 +7,7 @@ import { cleanEnhanced, ENHANCE_SYSTEM } from './agent/enhance'
 import { completeText } from './agent/complete'
 import { detectGpus } from './engines/gpu'
 import { civitaiSearch, hfFiles, hfSearch } from './engines/hub'
+import { inspectModel, memoryHardware } from './engines/memory'
 import { llmRoots } from './engines/local-provider'
 import { scanImageWeights } from './engines/library'
 import type { Services } from './services'
@@ -230,6 +231,8 @@ export function buildHandlers(s: Services, platform: PlatformApi): Handlers {
     'llama:start': async (modelPath) => {
       await s.llama.ensure(modelPath)
     },
+    'memory:inspect': (modelPath) => inspectModel(modelPath),
+    'memory:hardware': (force) => memoryHardware(s.engines, force),
     'llama:stop': () => s.llama.stop(),
 
     'library:gguf': () => s.localProvider.scan(true),

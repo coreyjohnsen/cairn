@@ -181,7 +181,7 @@ describe('LocalProvider thinking', () => {
     const server = await startMockOpenAI([{ text: ['ok'] }, { text: ['ok'] }])
     try {
       const calls: unknown[] = []
-      const llama = { acquire: async (_m: string, opts: { noThink?: boolean }) => (calls.push({ noThink: opts.noThink }), { base: server.url.replace(/\/v1$/, ''), release() {} }) }
+      const llama = { acquire: async (_m: string, opts: { noThink?: boolean }) => (calls.push({ noThink: opts.noThink }), { base: server.url.replace(/\/v1$/, ''), release() {} }), noteSpeed() {} }
       const p = new LocalProvider({ getSettings: () => defaultSettings('/m'), modelsDir: () => '/m', llama: llama as never })
       const go = async (thinking?: 'on' | 'off') => {
         for await (const _ of p.stream({ model: '/m/x.gguf', system: '', messages: [{ id: '1', role: 'user', createdAt: 0, content: 'hi' }], tools: [], params: {}, thinking, signal: new AbortController().signal, loadAttachment: async () => null })) void _

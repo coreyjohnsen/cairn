@@ -665,6 +665,12 @@ export interface LocalRuntimeSettings {
   flashAttn: 'auto' | 'on' | 'off'
   /** How the model's working memory (the KV cache) is stored. 8-bit takes about half the video memory of 16-bit, so twice the context fits. Needs flash attention. */
   kvCache: 'f16' | 'q8_0' | 'q4_0'
+  /** Mixture-of-experts models: keep the expert weights of this many of the first layers in RAM, the rest on the GPU. 0 = none. */
+  nCpuMoe: number
+  /** Keep the model's working memory (the KV cache) in RAM instead of video memory. Slower, but lets a much longer context fit. */
+  kvInRam: boolean
+  /** Settings chosen for one model (by the memory planner), keyed by file path. They replace the ones above for that model only. */
+  modelOverrides: Record<string, ModelRuntimeOverride>
   extraArgs: string
   /** Stop the server after this many idle minutes (0 = never). */
   idleUnloadMinutes: number
@@ -674,10 +680,96 @@ export interface LocalRuntimeSettings {
   modelNames: Record<string, string>
 }
 
+/** What the planner saved for one model. Anything left out follows the general runtime settings. */
+export interface ModelRuntimeOverride {
+  contextSize?: number
+  gpuLayers?: number
+  kvCache?: 'f16' | 'q8_0' | 'q4_0'
+  nCpuMoe?: number
+  kvInRam?: boolean
+}
+
+/** Where the engine actually put the model, read from its own start-up report (in MB). */
+export interface LlamaMemoryReport {
+  gpuModelMB: number
+  gpuCacheMB: number
+  gpuComputeMB: number
+  cpuModelMB: number
+  cpuCacheMB: number
+  cpuComputeMB: number
+  layersOnGpu?: number
+  layersTotal?: number
+}
+
+/** Speed of the latest answer from the loaded model, in tokens per second. */
+export interface LlamaSpeed {
+  generation?: number
+  prompt?: number
+  at: number
+}
+
+/* ───────────── Memory planner ───────────── */
+
+/** What the memory planner needs to know about a model, read from the header of its GGUF file. */
+export interface ModelShape {
+  arch: string
+  name?: string
+  /** Size of the whole model on disk (all parts together), in bytes. */
+  fileBytes: number
+  layers: number
+  embedding: number
+  heads: number
+  kvHeads: number
+  headDimK: number
+  headDimV: number
+  /** Cache values per token per layer for models that compress it (MLA); replaces the head sizes. */
+  mlaDim?: number
+  /** The longest context the model was trained for. */
+  trainedContext: number
+  experts: number
+  expertsUsed: number
+  slidingWindow: number
+  /** Which layers only look at a sliding window of recent text, or null when all look at everything. */
+  swaLayers: boolean[] | null
+  /** Bytes of weights in each layer, and how much of that is the routed experts. */
+  layerBytes: number[]
+  layerExpertBytes: number[]
+  /** Word embeddings (always kept in RAM) and the output layer (reuses the embeddings when tied). */
+  embedBytes: number
+  outputBytes: number
+  outputTied: boolean
+  otherBytes: number
+  /** The estimate may be off for this kind of model (it is new, or not a plain transformer). */
+  rough: boolean
+  /** Size of the picture-reading file next to the model, if there is one. */
+  mmprojBytes: number
+}
+
+/** What this computer offers the planner. */
+export interface MemoryHardware {
+  /** The engine build that will run the model; null when it is your own binary or not installed. */
+  backend: EngineBackend | null
+  gpuName: string
+  gpuCount: number
+  /** Video memory in MB (all cards of the main kind together); 0 without a GPU. */
+  vramMB: number
+  ramMB: number
+  gpuBandwidthGBs: number
+  gpuBandwidthKnown: boolean
+  ramBandwidthGBs: number
+  ramDetail: string
+  ramDetected: boolean
+  /** Which memory-placement flags the installed llama.cpp understands. */
+  flags: { nCpuMoe: boolean; overrideTensor: boolean; noKvOffload: boolean; known: boolean }
+}
+
 export type LlamaState = 'stopped' | 'starting' | 'running' | 'error'
 
 export interface LlamaStatus {
   state: LlamaState
+  /** What the engine reported about where the model went, once it finished loading. */
+  memory?: LlamaMemoryReport
+  speed?: LlamaSpeed
   modelPath?: string
   mmprojPath?: string
   port?: number

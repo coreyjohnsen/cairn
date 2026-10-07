@@ -37,7 +37,7 @@ export type StreamEvent =
   | { type: 'text'; text: string }
   | { type: 'reasoning'; text: string }
   | { type: 'tool_call'; index: number; id?: string; name?: string; args?: string }
-  | { type: 'usage'; promptTokens?: number; completionTokens?: number; tokensPerSecond?: number }
+  | { type: 'usage'; promptTokens?: number; completionTokens?: number; tokensPerSecond?: number; promptTokensPerSecond?: number }
   | { type: 'finish'; reason?: string }
 
 export interface Provider {

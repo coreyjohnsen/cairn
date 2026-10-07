@@ -12,6 +12,7 @@ import {
 import { emit } from './events'
 import { mapSecrets, seal, unseal } from './secrets'
 import { sanitizeAliases, sanitizeLoraPresets, sanitizeModelDefaults } from '@shared/imagePrefs'
+import { sanitizeOverrides } from '@shared/runtimePrefs'
 import { sanitizeRemote } from '@shared/remotePrefs'
 import { sanitizeServer } from '@shared/serverPrefs'
 import { mergeDefaults, writeFileAtomic } from './util/fsx'
@@ -82,6 +83,10 @@ export class SettingsStore {
     s.image.modelDefaults = sanitizeModelDefaults(s.image.modelDefaults)
     s.server = sanitizeServer(s.server)
     s.remote = sanitizeRemote(s.remote)
+    // What the memory planner saved per model, and the two general placement settings, are cleaned on every change.
+    s.local.modelOverrides = sanitizeOverrides(s.local.modelOverrides)
+    s.local.nCpuMoe = Number.isInteger(s.local.nCpuMoe) && s.local.nCpuMoe >= 0 && s.local.nCpuMoe <= 999 ? s.local.nCpuMoe : 0
+    s.local.kvInRam = s.local.kvInRam === true
     return s
   }
 

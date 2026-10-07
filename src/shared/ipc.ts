@@ -28,7 +28,9 @@ import type {
   ServerStatus,
   LocalModelFile,
   McpStatus,
+  MemoryHardware,
   ModelOption,
+  ModelShape,
   RemotePairing,
   RemoteScopes,
   RemoteDevice,
@@ -104,6 +106,10 @@ export interface IpcInvokeMap {
   'server:models': { args: []; result: ServerModelInfo[] }
   'server:newKey': { args: []; result: string }
   'llama:start': { args: [modelPath: string]; result: void }
+  /** Reads the layer, cache and expert sizes from a model file's header, for the memory planner. */
+  'memory:inspect': { args: [modelPath: string]; result: ModelShape }
+  /** Video memory, RAM, their speeds and the memory flags the installed engine understands. */
+  'memory:hardware': { args: [force?: boolean]; result: MemoryHardware }
   'llama:stop': { args: []; result: void }
 
   'library:gguf': { args: []; result: LocalModelFile[] }
@@ -215,6 +221,8 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'server:models',
   'server:newKey',
   'llama:start',
+  'memory:inspect',
+  'memory:hardware',
   'llama:stop',
   'library:gguf',
   'library:imageWeights',

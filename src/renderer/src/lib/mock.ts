@@ -21,7 +21,9 @@ import type {
   ImageStage,
   ImageTargetOption,
   LlamaStatus,
+  MemoryHardware,
   ModelOption,
+  ModelShape,
   RemoteDevice,
   RemoteStatus,
   ServerStatus,
@@ -331,7 +333,32 @@ const IMAGE_STEPS: { stage: ImageStage; label: string; fraction: number; ms: num
 
 const UPSCALE_STEP = { stage: 'upscaling' as ImageStage, label: 'Upscaling the finished image…', fraction: 0.95, ms: 3000 }
 
-const llama: LlamaStatus = { state: 'running', modelPath: '/models/llm/Qwen3-8B-Q4_K_M.gguf', port: 53211, pid: 4242, startedAt: now - 20 * MIN, log: ['llama_model_loader: loaded meta data with 28 key-value pairs', 'load_tensors: offloaded 37/37 layers to GPU', 'main: server is listening on http://127.0.0.1:53211'] }
+const llama: LlamaStatus = { state: 'running', modelPath: q.get('loaded') ? `/models/llm/${q.get('loaded')}.gguf` : '/models/llm/Qwen3-8B-Q4_K_M.gguf', memory: { gpuModelMB: 4980, gpuCacheMB: 1152, gpuComputeMB: 305, cpuModelMB: 290, cpuCacheMB: 0, cpuComputeMB: 17, layersOnGpu: 37, layersTotal: 37 }, speed: { generation: 38.4, prompt: 912, at: now - 2 * MIN }, port: 53211, pid: 4242, startedAt: now - 20 * MIN, log: ['llama_model_loader: loaded meta data with 28 key-value pairs', 'load_tensors: offloaded 37/37 layers to GPU', 'main: server is listening on http://127.0.0.1:53211'] }
+
+/* ───────────── memory planner ───────────── */
+
+const evenly = (n: number, total: number): number[] => Array.from({ length: n }, () => Math.round(total / n))
+const flagsOk = { nCpuMoe: true, overrideTensor: true, noKvOffload: true, known: true }
+
+/** The computer the planner sees: ?hw=small (8 GB card, 16 GB RAM), ?hw=cpu (no graphics card), ?hw=big (24 GB card, 64 GB RAM); otherwise a 16 GB card with 32 GB of RAM. */
+function memoryHardware(): MemoryHardware {
+  const kind = q.get('hw')
+  if (kind === 'cpu') return { backend: 'cpu', gpuName: '', gpuCount: 0, vramMB: 0, ramMB: 16384, gpuBandwidthGBs: 0, gpuBandwidthKnown: false, ramBandwidthGBs: 36, ramDetail: 'assumed ordinary dual-channel DDR4', ramDetected: false, flags: flagsOk }
+  if (kind === 'small') return { backend: 'vulkan', gpuName: 'NVIDIA GeForce RTX 3060', gpuCount: 1, vramMB: 8192, ramMB: 16384, gpuBandwidthGBs: 360, gpuBandwidthKnown: true, ramBandwidthGBs: 35.8, ramDetail: 'DDR4-3200, 2 sticks', ramDetected: true, flags: flagsOk }
+  if (kind === 'big') return { backend: 'cuda', gpuName: 'NVIDIA GeForce RTX 3090', gpuCount: 1, vramMB: 24576, ramMB: 65536, gpuBandwidthGBs: 936, gpuBandwidthKnown: true, ramBandwidthGBs: 62.7, ramDetail: 'DDR5-5600, 2 sticks', ramDetected: true, flags: flagsOk }
+  return { backend: 'vulkan', gpuName: 'AMD Radeon RX 6900 XT', gpuCount: 1, vramMB: 16384, ramMB: 32768, gpuBandwidthGBs: 512, gpuBandwidthKnown: true, ramBandwidthGBs: 35.8, ramDetail: 'DDR4-3200, 2 sticks', ramDetected: true, flags: flagsOk }
+}
+
+function modelShape(file: string): ModelShape {
+  const dense = (layers: number, total: number, over: Partial<ModelShape> = {}): ModelShape => ({
+    arch: 'llama', fileBytes: total, layers, embedding: 4096, heads: 32, kvHeads: 8, headDimK: 128, headDimV: 128, trainedContext: 131072, experts: 0, expertsUsed: 0, slidingWindow: 0, swaLayers: null,
+    layerBytes: evenly(layers, total * 0.9), layerExpertBytes: new Array(layers).fill(0), embedBytes: total * 0.05, outputBytes: total * 0.05, outputTied: false, otherBytes: 1_000_000, rough: false, mmprojBytes: 0, ...over
+  })
+  if (/30B-A3B/i.test(file)) return dense(48, 18_600_000_000, { arch: 'qwen3moe', embedding: 2048, kvHeads: 4, trainedContext: 40960, experts: 128, expertsUsed: 8, layerBytes: evenly(48, 17_400_000_000), layerExpertBytes: evenly(48, 16_600_000_000), embedBytes: 350_000_000, outputBytes: 500_000_000 })
+  if (/70B/i.test(file)) return dense(80, 42_500_000_000, { embedding: 8192, heads: 64 })
+  if (/gemma/i.test(file)) return dense(48, 7_300_000_000, { arch: 'gemma3', embedding: 3840, heads: 16, headDimK: 256, headDimV: 256, slidingWindow: 1024, swaLayers: Array.from({ length: 48 }, (_, i) => i % 6 < 5), outputTied: true, mmprojBytes: 850_000_000 })
+  return dense(36, 5_030_000_000, { arch: 'qwen3', embedding: 4096, heads: 32, kvHeads: 8, trainedContext: 40960 })
+}
 
 const downloads: DownloadItem[] = onboarding
   ? []
@@ -713,6 +740,8 @@ const handlers: Handlers = {
   'llama:status': () => llama,
   'llama:start': () => undefined,
   'llama:stop': () => undefined,
+  'memory:hardware': () => memoryHardware(),
+  'memory:inspect': (file) => modelShape(file),
   'library:setName': (p, name) => {
     const names = { ...(settings.local.modelNames ?? {}) }
     if (name.trim()) names[p] = name.trim()
@@ -725,7 +754,9 @@ const handlers: Handlers = {
       : [
           { path: '/models/llm/Qwen3-8B-Q4_K_M.gguf', name: 'Qwen3-8B-Q4_K_M', sizeBytes: 5_030_000_000, quant: 'Q4_K_M', root: '/models/llm' },
           { path: '/models/llm/gemma-3-12b-it-Q4_K_M.gguf', name: 'gemma-3-12b-it-Q4_K_M', sizeBytes: 7_300_000_000, quant: 'Q4_K_M', mmprojPath: '/models/llm/mmproj.gguf', root: '/models/llm' },
-          { path: '/models/llm/model.gguf', name: 'model', sizeBytes: 4_680_000_000, quant: undefined, root: '/models/llm' }
+          { path: '/models/llm/model.gguf', name: 'model', sizeBytes: 4_680_000_000, quant: undefined, root: '/models/llm' },
+          { path: '/models/llm/Qwen3-30B-A3B-Q4_K_M.gguf', name: 'Qwen3-30B-A3B-Q4_K_M', sizeBytes: 18_600_000_000, quant: 'Q4_K_M', root: '/models/llm' },
+          { path: '/models/llm/Llama-3.3-70B-Instruct-Q4_K_M.gguf', name: 'Llama-3.3-70B-Instruct-Q4_K_M', sizeBytes: 42_500_000_000, quant: 'Q4_K_M', root: '/models/llm' }
         ]
     ).map((f) => ({ ...f, label: settings.local.modelNames?.[f.path] || undefined })),
   'library:imageWeights': () => [

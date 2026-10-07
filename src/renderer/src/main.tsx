@@ -11,6 +11,7 @@ import './styles/hub.css'
 import './styles/imgprog.css'
 import './styles/pages.css'
 import './styles/connect.css'
+import './styles/memory.css'
 import { App } from './App'
 
 async function start() {

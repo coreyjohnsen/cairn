@@ -1,12 +1,13 @@
 import { Cpu, Eye, FolderOpen, Pencil, Play, Square, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import type { LocalModelFile } from '@shared/types'
-import { Badge, Button, Card, Field, IconButton, Notice, NumberField, Progress, Section, Segmented, Select, Spinner, TextField } from '@/components/ui'
+import { Badge, Button, Card, Field, IconButton, Notice, NumberField, Progress, Section, Segmented, Select, Spinner, Switch, TextField } from '@/components/ui'
 import { invoke } from '@/lib/api'
 import { baseName, errorText, formatBytes } from '@/lib/format'
 import { useApp } from '@/store/app'
 import { useLibrary } from '@/store/library'
 import { HfBrowser } from './HfBrowser'
+import { MemoryPlanner, PlannedBadge } from './MemoryPlanner'
 import { DownloadsList, Row } from './shared'
 
 function EngineBanner() {
@@ -84,6 +85,20 @@ function ServerCard() {
         )}
       </div>
       {llama.error && <div className="dl-err selectable" style={{ marginTop: 10 }}>{llama.error}</div>}
+      {llama.state === 'error' && /out of memory|failed to allocate|cudamalloc|outofdevicememory|insufficient memory|not enough memory|unable to allocate|std::bad_alloc|alloc.*failed/i.test(`${llama.error ?? ''}\n${llama.log.slice(-30).join('\n')}`) && (
+        <div style={{ marginTop: 10 }}>
+          <Notice
+            tone="warn"
+            action={
+              <Button size="sm" onClick={() => document.querySelector('.mp')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                Open the memory planner
+              </Button>
+            }
+          >
+            The model probably did not fit in memory. The memory planner below shows what fits and can set the model up to use RAM as well.
+          </Notice>
+        </div>
+      )}
       {llama.log.length > 0 && (
         <>
           <button type="button" className="link-btn" style={{ marginTop: 10 }} onClick={() => setLog((l) => !l)}>
@@ -194,6 +209,7 @@ function Library() {
               <span className="row" style={{ gap: 8 }}>
                 <span className="ellipsis">{m.label ?? m.name}</span>
                 {m.quant && <Badge>{m.quant}</Badge>}
+                <PlannedBadge path={m.path} />
                 {m.mmprojPath && (
                   <Badge tone="info" title="Has a vision projector next to it">
                     <Eye size={11} /> vision
@@ -271,6 +287,12 @@ function Runtime() {
           ]}
         />
       </Field>
+      <Field row label="Experts kept in RAM" hint="For mixture-of-experts models (names like 30B-A3B): keep the experts of this many of the first layers in RAM instead of video memory, so a bigger model fits. 0 keeps them on the GPU. The memory planner above sets this per model.">
+        <NumberField value={local.nCpuMoe ?? 0} min={0} max={999} onCommit={(v) => set({ nCpuMoe: v })} />
+      </Field>
+      <Field row label="Working memory in RAM" hint="Keep the model's working memory (the KV cache) in RAM instead of video memory. Lets a much longer context fit, but every word reads it over slower memory.">
+        <Switch checked={!!local.kvInRam} onChange={(v) => set({ kvInRam: v })} />
+      </Field>
       <Field row label="CPU threads" hint="0 lets the engine decide.">
         <NumberField value={local.threads} min={0} max={256} onCommit={(v) => set({ threads: v })} />
       </Field>
@@ -298,6 +320,9 @@ export function LocalModels() {
       <Section title="On this computer" subtitle="GGUF models found in your models folder. Add more by downloading below or copying files in.">
         <Library />
         <DownloadsList subdir="llm" />
+      </Section>
+      <Section title="Memory planner" subtitle="See what fits in video memory and what has to go to RAM, then set a model up to use both. Bigger models and longer contexts are possible; the cost is speed.">
+        <MemoryPlanner />
       </Section>
       <Section title="Get a model" subtitle="Search Hugging Face, or paste a link or an owner/name. Pick a quantisation that fits your video memory: Q4_K_M is a good start.">
         <HfBrowser

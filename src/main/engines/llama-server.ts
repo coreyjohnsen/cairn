@@ -2,7 +2,9 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
-import type { LlamaStatus, Settings } from '@shared/types'
+import type { LlamaSpeed, LlamaStatus, Settings } from '@shared/types'
+import { parseLlamaMemory } from '@shared/llamaLog'
+import { runtimeFor } from '@shared/runtimePrefs'
 import { emit } from '../events'
 import { killTree } from '../tools/shell'
 import type { EngineManager } from './manager'
@@ -46,6 +48,19 @@ export function freePort(): Promise<number> {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
+/** Which memory-placement flags the installed llama.cpp understands; null means it could not be asked. */
+export interface PlacementFlags {
+  nCpuMoe: boolean
+  overrideTensor: boolean
+  noKvOffload: boolean
+}
+
+/** Matches the expert weights of the first `count` layers, for builds that have --override-tensor but not --n-cpu-moe. */
+export function expertTensorPattern(count: number): string {
+  const layers = Array.from({ length: count }, (_, i) => i).join('|')
+  return `blk\\.(?:${layers})\\.ffn_.*_exps\\.=CPU`
+}
+
 /** Builds the llama-server command line from settings (exported for tests). */
 export function buildLlamaArgs(
   settings: Settings['local'],
@@ -54,17 +69,30 @@ export function buildLlamaArgs(
   backend: string | null,
   mmproj: string | null,
   /** Start with thinking switched off at the engine, using whichever flag this build has. */
-  noThink?: '--reasoning' | '--reasoning-budget' | null
+  noThink?: '--reasoning' | '--reasoning-budget' | null,
+  /** What the installed build can do with memory placement (the planner's choices); unknown is treated as the older, widely available flags. */
+  flags?: PlacementFlags | null
 ): string[] {
-  const ngl = backend === 'cpu' ? 0 : settings.gpuLayers < 0 ? 99 : settings.gpuLayers
-  const args = ['-m', modelPath, '--host', '127.0.0.1', '--port', String(port), '-c', String(settings.contextSize), '-ngl', String(ngl), '--jinja', '--no-webui', '-np', '1']
-  if (settings.threads > 0) args.push('-t', String(settings.threads))
-  if (settings.flashAttn !== 'auto') args.push('-fa', settings.flashAttn)
+  // What the memory planner saved for this model replaces the general settings.
+  const rt = runtimeFor(settings, modelPath)
+  const ngl = backend === 'cpu' ? 0 : rt.gpuLayers < 0 ? 99 : rt.gpuLayers
+  const args = ['-m', modelPath, '--host', '127.0.0.1', '--port', String(port), '-c', String(rt.contextSize), '-ngl', String(ngl), '--jinja', '--no-webui', '-np', '1']
+  if (rt.threads > 0) args.push('-t', String(rt.threads))
+  if (rt.flashAttn !== 'auto') args.push('-fa', rt.flashAttn)
   if (mmproj) args.push('--mmproj', mmproj)
-  const extra = splitArgs(settings.extraArgs)
+  const extra = splitArgs(rt.extraArgs)
   // A smaller KV cache lets a longer context fit. Its V half needs flash attention, so that is left alone when attention is forced off.
-  const kv = settings.kvCache ?? 'f16'
-  if (kv !== 'f16' && settings.flashAttn !== 'off' && !extra.some((a) => /^(--cache-type-[kv]|-ctk|-ctv)$/.test(a))) args.push('--cache-type-k', kv, '--cache-type-v', kv)
+  const kv = rt.kvCache ?? 'f16'
+  if (kv !== 'f16' && rt.flashAttn !== 'off' && !extra.some((a) => /^(--cache-type-[kv]|-ctk|-ctv)$/.test(a))) args.push('--cache-type-k', kv, '--cache-type-v', kv)
+  // Experts of a mixture-of-experts model kept in RAM, and the cache kept in RAM. The user's own flags for the same win.
+  const gpu = ngl > 0
+  const ownMoe = extra.some((a) => /^(--n-cpu-moe|-ncmoe|--cpu-moe|-cmoe|--override-tensor|-ot)$/.test(a))
+  const moe = rt.nCpuMoe ?? 0
+  if (gpu && moe > 0 && !ownMoe) {
+    if (flags?.nCpuMoe) args.push('--n-cpu-moe', String(moe))
+    else if (flags?.overrideTensor ?? true) args.push('--override-tensor', expertTensorPattern(moe))
+  }
+  if (gpu && rt.kvInRam && !extra.some((a) => /^(--no-kv-offload|-nkvo)$/.test(a)) && (flags?.noKvOffload ?? true)) args.push('--no-kv-offload')
   // The user's own reasoning flags win over ours.
   if (noThink && !extra.some((a) => a.startsWith('--reasoning'))) args.push(...(noThink === '--reasoning' ? ['--reasoning', 'off'] : ['--reasoning-budget', '0']))
   args.push(...extra)
@@ -129,7 +157,8 @@ export class LlamaManager {
   private configSignature(modelPath: string, noThink: boolean): string {
     const s = this.d.getSettings()
     const bin = this.d.engines.resolveBinary('llama')
-    return JSON.stringify([modelPath, noThink, bin, s.local.contextSize, s.local.gpuLayers, s.local.threads, s.local.flashAttn, s.local.kvCache, s.local.extraArgs, s.local.port, s.engines.llama.env])
+    const rt = runtimeFor(s.local, modelPath)
+    return JSON.stringify([modelPath, noThink, bin, rt.contextSize, rt.gpuLayers, rt.threads, rt.flashAttn, rt.kvCache, rt.nCpuMoe, rt.kvInRam, rt.extraArgs, rt.port, s.engines.llama.env])
   }
 
   /** Make sure `modelPath` is loaded; resolves with the server's base URL (no /v1). */
@@ -171,9 +200,16 @@ export class LlamaManager {
       // Newer builds have --reasoning on/off/auto; older ones have --reasoning-budget 0.
       reasoningFlag = flags?.has('--reasoning') ? '--reasoning' : '--reasoning-budget'
     }
-    const args = buildLlamaArgs(settings.local, modelPath, port, backend, mmproj, reasoningFlag)
+    // Only ask the engine what it supports when a placement flag is needed (the first time takes a moment).
+    const rt = runtimeFor(settings.local, modelPath)
+    let placement: PlacementFlags | null = null
+    if (rt.nCpuMoe > 0 || rt.kvInRam) {
+      const flags = await probeFlags(binary, this.d.engines.spawnEnv('llama', binary))
+      if (flags) placement = { nCpuMoe: flags.has('--n-cpu-moe'), overrideTensor: flags.has('--override-tensor'), noKvOffload: flags.has('--no-kv-offload') }
+    }
+    const args = buildLlamaArgs(settings.local, modelPath, port, backend, mmproj, reasoningFlag, placement)
 
-    this.set({ state: 'starting', modelPath, mmprojPath: mmproj ?? undefined, port, error: undefined, pid: undefined, startedAt: Date.now(), log: [`$ ${path.basename(binary)} ${args.join(' ')}`] })
+    this.set({ state: 'starting', modelPath, mmprojPath: mmproj ?? undefined, port, error: undefined, pid: undefined, startedAt: Date.now(), memory: undefined, speed: undefined, log: [`$ ${path.basename(binary)} ${args.join(' ')}`] })
 
     let exited: { code: number | null } | null = null
     let child: ChildProcess
@@ -233,9 +269,17 @@ export class LlamaManager {
       await sleep(400)
     }
     this.signature = sig
-    this.set({ state: 'running', error: undefined })
+    // Where the engine says it put the model (from its own start-up report), shown beside the planner's estimate.
+    this.set({ state: 'running', error: undefined, memory: parseLlamaMemory(this.st.log) ?? undefined })
     this.touch()
     return base
+  }
+
+  /** Remembers how fast the latest answer was written and the prompt read, for the planner to show. */
+  noteSpeed(speed: Omit<LlamaSpeed, 'at'>): void {
+    if (speed.generation === undefined && speed.prompt === undefined) return
+    const prev = this.st.speed
+    this.set({ speed: { generation: speed.generation ?? prev?.generation, prompt: speed.prompt ?? prev?.prompt, at: Date.now() } }, false)
   }
 
   async stop(): Promise<void> {
@@ -260,7 +304,7 @@ export class LlamaManager {
     })
     killTree(p.pid)
     await done
-    this.set({ state: 'stopped', pid: undefined, error: undefined })
+    this.set({ state: 'stopped', pid: undefined, error: undefined, memory: undefined, speed: undefined })
   }
 
   /**

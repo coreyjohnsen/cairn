@@ -154,7 +154,7 @@ export async function createServices(opts: ServiceOptions): Promise<Services> {
   const needsKey = (s: Settings) => s.server.enabled && s.server.requireKey && !s.server.apiKey
 
   // React to the parts of settings that have live side effects, ignoring unrelated edits.
-  const sig = (s: Settings) => ({ names: JSON.stringify(s.local.modelNames ?? {}), providers: JSON.stringify(s.providers), mcp: JSON.stringify(s.mcpServers), image: JSON.stringify(s.image), paths: JSON.stringify([s.paths.modelsDir, s.paths.extraModelDirs]), server: JSON.stringify(s.server), remote: JSON.stringify(s.remote) })
+  const sig = (s: Settings) => ({ names: JSON.stringify([s.local.modelNames ?? {}, s.local.contextSize, s.local.modelOverrides]), providers: JSON.stringify(s.providers), mcp: JSON.stringify(s.mcpServers), image: JSON.stringify(s.image), paths: JSON.stringify([s.paths.modelsDir, s.paths.extraModelDirs]), server: JSON.stringify(s.server), remote: JSON.stringify(s.remote) })
   let last = sig(get())
   settings.onChange((s) => {
     if (serving && needsKey(s)) {
