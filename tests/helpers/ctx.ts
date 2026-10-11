@@ -13,7 +13,7 @@ export function makeCtx(workspace: string | null, mutate?: (s: Settings) => void
     settings,
     signal: signal ?? new AbortController().signal,
     conversation: { id: 'c1', title: 't', createdAt: 0, updatedAt: 0, toolsEnabled: true, params: {}, messages: [] },
-    services: { imageAvailable: () => false, generateImage: async () => [] },
+    services: { imageAvailable: () => false, generateImage: async () => [], setPlan() {}, addCustomTool() {}, toolNames: () => [] },
     progress() {}
   }
 }

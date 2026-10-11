@@ -137,6 +137,28 @@ export interface ChatMessage {
   usage?: MessageUsage
   /** Informational line shown in the transcript (never sent to the model). */
   notice?: string
+  /** user: the slash command this message started with (`plan`, `build`, `tool`, `init`, `review`). The text is what followed it. */
+  command?: string
+}
+
+export type PlanStatus = 'todo' | 'doing' | 'done' | 'blocked'
+
+export interface PlanStep {
+  id: string
+  text: string
+  status: PlanStatus
+}
+
+/**
+ * What the assistant is working towards in a chat. Kept outside the messages and shown to the model on every request,
+ * so it survives the older messages being summarized.
+ */
+export interface ConversationPlan {
+  goal: string
+  /** The design as markdown: which file is responsible for what, how the parts interact, and how it is tested. */
+  design?: string
+  steps: PlanStep[]
+  updatedAt: number
 }
 
 /** Whether a reasoning model should think before answering. `auto` leaves the model's own default alone. */
@@ -219,6 +241,8 @@ export interface Conversation {
   /** Set once the older part of the chat has been summarized for the model. */
   compaction?: Compaction
   contextUsage?: ContextUsage
+  /** The plan the assistant is following, when it has made one (the plan tool or /plan). */
+  plan?: ConversationPlan
 }
 
 export interface ConversationSummary {
@@ -236,7 +260,10 @@ export type ConversationPatch = Partial<
     Conversation,
     'title' | 'modelRef' | 'systemPrompt' | 'workspace' | 'toolsEnabled' | 'imageTarget' | 'params' | 'pinned'
   >
->
+> & {
+  /** null removes the plan. */
+  plan?: ConversationPlan | null
+}
 
 export interface AttachmentInput {
   name: string
@@ -288,6 +315,7 @@ export type ChatEvent =
   | { type: 'title'; conversationId: string; title: string }
   | { type: 'context'; conversationId: string; usage: ContextUsage }
   | { type: 'compaction'; conversationId: string; compaction?: Compaction }
+  | { type: 'plan'; conversationId: string; plan?: ConversationPlan }
   | { type: 'run-end'; runId: string; conversationId: string; outcome: 'done' | 'aborted' | 'error'; error?: string }
 
 export interface SendRequest {

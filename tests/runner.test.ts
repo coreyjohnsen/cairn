@@ -45,6 +45,7 @@ async function setup(script: ScriptedTurn[], opts: { tools?: boolean; image?: bo
   const mcp = new McpManager(() => settings)
   const deps: RunnerDeps = {
     getSettings: () => settings,
+    addCustomTool() {},
     setToolPermission: (name, perm) => {
       settings.agent.toolPermissions = { ...settings.agent.toolPermissions, [name]: perm }
     },

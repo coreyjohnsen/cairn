@@ -3,10 +3,14 @@ import type { Settings, ToolInfo, ToolPermission } from '@shared/types'
 import { customToolImpl } from './custom'
 import { fsTools } from './fs'
 import { imageTools } from './image'
+import { planningTools } from './planning'
 import type { McpManager } from './mcp'
 import { shellTools } from './shell'
 import type { ToolImpl } from './types'
 import { webTools } from './web'
+
+/** Tools the assistant only gets when the user asks for them with a command. */
+export const COMMAND_ONLY = ['create_tool']
 
 export interface Entry {
   impl: ToolImpl
@@ -38,6 +42,7 @@ export class ToolRegistry {
     }
 
     for (const t of [...fsTools(), ...shellTools(), ...webTools()]) add(t)
+    for (const t of planningTools()) add(t)
     for (const t of imageTools()) add(t, imageAvailable, imageAvailable ? undefined : 'Set up an image model first (Models → Image models)')
 
     for (const cfg of settings.customTools) {
@@ -61,11 +66,15 @@ export class ToolRegistry {
     return out
   }
 
-  /** Tools to offer to the model in a run (available and not denied). */
-  forRun(imageAvailable: boolean): ToolImpl[] {
+  /**
+   * Tools to offer to the model in a run (available and not denied). Tools that need a command to be offered
+   * (`create_tool`, with /tool) are left out unless `opts.allow` names them.
+   */
+  forRun(imageAvailable: boolean, opts: { allow?: string[] } = {}): ToolImpl[] {
     const settings = this.getSettings()
     return this.entries(imageAvailable)
       .filter((e) => e.info.available && this.permissionFor(settings, e.impl) !== 'deny')
+      .filter((e) => !COMMAND_ONLY.includes(e.impl.name) || opts.allow?.includes(e.impl.name))
       .map((e) => e.impl)
   }
 

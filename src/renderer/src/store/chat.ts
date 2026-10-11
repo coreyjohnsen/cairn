@@ -151,7 +151,11 @@ export const useChat = create<ChatState>()((set, get) => {
     async patch(id, patch) {
       try {
         const conv = await invoke('conversations:update', id, patch)
-        set((s) => ({ cache: { ...s.cache, [id]: { ...(s.cache[id] ?? conv), ...patch, messages: s.cache[id]?.messages ?? conv.messages } } }))
+        set((s) => {
+          const { plan, ...rest } = patch
+          const cur = s.cache[id] ?? conv
+          return { cache: { ...s.cache, [id]: { ...cur, ...rest, plan: plan === undefined ? cur.plan : (plan ?? undefined), messages: s.cache[id]?.messages ?? conv.messages } } }
+        })
       } catch (e) {
         useApp.getState().toast('error', errorText(e))
       }
@@ -315,6 +319,9 @@ export const useChat = create<ChatState>()((set, get) => {
           break
         case 'context':
           set((s) => (s.cache[e.conversationId] ? { cache: { ...s.cache, [e.conversationId]: { ...s.cache[e.conversationId], contextUsage: e.usage } } } : {}))
+          break
+        case 'plan':
+          set((s) => (s.cache[e.conversationId] ? { cache: { ...s.cache, [e.conversationId]: { ...s.cache[e.conversationId], plan: e.plan } } } : {}))
           break
         case 'compaction':
           set((s) => (s.cache[e.conversationId] ? { cache: { ...s.cache, [e.conversationId]: { ...s.cache[e.conversationId], compaction: e.compaction } } } : {}))

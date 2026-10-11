@@ -1,7 +1,10 @@
 import os from 'node:os'
+import type { CommandId } from '@shared/commands'
 import type { Conversation, Settings } from '@shared/types'
 import { resolveShell } from '../tools/shell'
 import type { ToolImpl } from '../tools/types'
+import { WORKING_METHOD, modeDirective, planSection } from './modes'
+import type { Notes } from './notes'
 
 export function osLabel(): string {
   const p = os.platform()
@@ -13,7 +16,14 @@ export function osLabel(): string {
   return `Linux ${os.release()} (${os.arch()})`
 }
 
-export function buildSystemPrompt(settings: Settings, conv: Conversation, tools: ToolImpl[], workspace: string | null): string {
+export interface PromptExtras {
+  /** The project notes found in the workspace. */
+  notes?: Notes | null
+  /** The slash command this message started with. */
+  mode?: CommandId
+}
+
+export function buildSystemPrompt(settings: Settings, conv: Conversation, tools: ToolImpl[], workspace: string | null, extras: PromptExtras = {}): string {
   const base = (conv.systemPrompt ?? settings.chat.systemPrompt ?? '').trim()
   const names = new Set(tools.map((t) => t.name))
   const lines: string[] = []
@@ -41,6 +51,16 @@ export function buildSystemPrompt(settings: Settings, conv: Conversation, tools:
     }
     lines.push('- If a tool returns an error, read it, correct the call and try again at most once or twice before asking the user.')
     lines.push('- After using tools, give the user a short summary of what you did and found.')
+    if (names.has('read_file') && workspace) {
+      lines.push('', '## How to work', WORKING_METHOD)
+    }
+    if (extras.notes) {
+      lines.push('', `## Project notes (${extras.notes.file})`, 'Written for this folder. Follow them, and keep them true.', extras.notes.text.trim())
+    }
+    const plan = names.has('update_plan') ? planSection(conv.plan) : ''
+    if (plan) lines.push('', plan)
+    const directive = modeDirective(extras.mode, conv.plan)
+    if (directive) lines.push('', '## This message', directive)
   }
   return lines.join('\n').trim()
 }

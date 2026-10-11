@@ -1,6 +1,6 @@
 import { baseName, truncate } from './format'
 
-export type ToolIconKey = 'read' | 'write' | 'edit' | 'list' | 'search' | 'find' | 'move' | 'delete' | 'shell' | 'web' | 'image' | 'custom'
+export type ToolIconKey = 'read' | 'write' | 'edit' | 'list' | 'search' | 'find' | 'move' | 'delete' | 'shell' | 'web' | 'image' | 'plan' | 'notes' | 'custom'
 
 export interface ToolSummary {
   icon: ToolIconKey
@@ -45,6 +45,14 @@ export function summarizeTool(name: string, rawArgs: string): ToolSummary {
       return { icon: 'web', verb: 'Fetched', target: truncate(str(a.url).replace(/^https?:\/\//, ''), 70) }
     case 'web_search':
       return { icon: 'web', verb: 'Searched the web for', target: truncate(str(a.query), 70) }
+    case 'update_plan': {
+      const n = Array.isArray(a.steps) ? a.steps.length : 0
+      return { icon: 'plan', verb: 'Updated the plan', target: str(a.goal) ? truncate(str(a.goal), 70) : n ? `${n} steps` : '' }
+    }
+    case 'update_project_notes':
+      return { icon: 'notes', verb: 'Updated the project notes', target: str(a.mode) === 'replace' ? 'rewritten' : 'added to' }
+    case 'create_tool':
+      return { icon: 'custom', verb: 'Made the tool', target: str(a.name) }
     case 'generate_image':
       return { icon: 'image', verb: 'Generated an image of', target: truncate(str(a.prompt), 80) }
     default: {

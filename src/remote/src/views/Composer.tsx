@@ -1,6 +1,8 @@
 import { ArrowUp, Camera, FileText, Image as ImageIcon, MountainSnow, Paperclip, Square, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { matchCommands } from '@shared/commands'
 import type { AttachmentInput } from '@shared/types'
+import { SlashMenu } from '@/components/SlashMenu'
 import { Spinner } from '@/components/ui'
 import { cx, formatBytes } from '@/lib/format'
 import { readFiles } from '@/lib/files'
@@ -45,6 +47,7 @@ export function Composer({ storageKey }: { storageKey: string }) {
   const toast = useApp((s) => s.toast)
   const sendOnEnter = useApp((s) => s.settings?.chat.sendOnEnter ?? true)
   const canDraw = useSession((s) => !!s.session?.device.scopes.images)
+  const canTools = useSession((s) => !!s.session?.device.scopes.tools)
   const bus = useComposerBus()
   const touch = useTouch()
   const [text, setText] = useState(() => loadDraft(storageKey))
@@ -118,7 +121,9 @@ export function Composer({ storageKey }: { storageKey: string }) {
     } else setMode('chat')
   }
 
-  const placeholder = useMemo(() => (mode === 'image' ? 'Describe the picture…' : 'Message'), [mode])
+  const placeholder = useMemo(() => (mode === 'image' ? 'Describe the picture…' : canTools ? 'Message, or / for commands' : 'Message'), [mode, canTools])
+  // Commands need tools, which only some phones are allowed. /imagine needs pictures.
+  const commands = mode === 'chat' ? matchCommands(text).filter((c) => (c.id === 'imagine' ? canDraw : canTools)) : []
 
   return (
     <div className="mbar">
@@ -142,6 +147,14 @@ export function Composer({ storageKey }: { storageKey: string }) {
           ))}
         </div>
       )}
+      <SlashMenu
+        items={commands}
+        index={-1}
+        onPick={(c) => {
+          setText(`${c.name} `)
+          area.current?.focus()
+        }}
+      />
       <div className={cx('composer-box', mode === 'image' && 'draw')}>
         <button type="button" className="r-round" aria-label="Add a photo or file" onClick={() => setAdding(true)} disabled={busy}>
           {busy ? <Spinner size={18} /> : <Paperclip size={20} />}

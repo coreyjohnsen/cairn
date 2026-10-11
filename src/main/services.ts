@@ -131,6 +131,7 @@ export async function createServices(opts: ServiceOptions): Promise<Services> {
       const s = get()
       settings.update({ agent: { ...s.agent, toolPermissions: { ...s.agent.toolPermissions, [name]: permission } } })
     },
+    addCustomTool: (cfg) => settings.update({ customTools: [...get().customTools, cfg] }),
     conversations,
     models,
     tools,

@@ -1,6 +1,8 @@
 import type {
   ApprovalKind,
   Conversation,
+  ConversationPlan,
+  CustomToolConfig,
   ImageRef,
   ImageStage,
   Settings,
@@ -27,6 +29,12 @@ export interface ImageToolArgs {
 export interface ToolServices {
   imageAvailable(): boolean
   generateImage(args: ImageToolArgs, ctx: ToolContext): Promise<ImageRef[]>
+  /** Replace the chat's plan (and tell the window). */
+  setPlan(plan: ConversationPlan): void
+  /** Add a tool the assistant made to the user's custom tools. */
+  addCustomTool(cfg: CustomToolConfig): void
+  /** Names of every tool in use, so a new one does not clash with them. */
+  toolNames(): string[]
 }
 
 export interface ToolContext {
