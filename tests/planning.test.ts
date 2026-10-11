@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ApprovalManager } from '../src/main/agent/approvals'
+import { messageTokens } from '../src/main/agent/context'
 import { toolsForMode } from '../src/main/agent/modes'
 import { readNotes } from '../src/main/agent/notes'
 import { buildSystemPrompt } from '../src/main/agent/prompt'
@@ -427,6 +428,14 @@ describe('keeping to the plan', () => {
     await runner.send({ conversationId: conv.id, text: 'go' })
     await waitEnd(conv.id)
     expect(fs.readFileSync(path.join(ws, 'ok.txt'), 'utf8')).toBe('whole')
+  })
+
+  it('does not count the text of a cut-off call, which is not sent back', () => {
+    const base = { id: 'm', role: 'assistant' as const, createdAt: 0, content: '' }
+    const cut = messageTokens({ ...base, toolCalls: [{ id: 'c', name: 'write_file', arguments: `{"path":"a","content":"${'x'.repeat(30000)}` }] })
+    const whole = messageTokens({ ...base, toolCalls: [{ id: 'c', name: 'write_file', arguments: JSON.stringify({ path: 'a', content: 'x'.repeat(30000) }) }] })
+    expect(cut).toBeLessThan(100)
+    expect(whole).toBeGreaterThan(5000)
   })
 
   it('asks for small steps and one at a time', () => {

@@ -15,9 +15,23 @@ export function imageAttachments(m: ChatMessage): Attachment[] {
   return (m.attachments ?? []).filter((a) => a.kind === 'image')
 }
 
+/** Sent in place of a tool call's arguments that are not valid JSON (the reply was cut off in the middle of them). */
+export const CUT_OFF_ARGS = JSON.stringify({ _note: 'These arguments were cut off at the token limit before they were complete, so the call was not run.' })
+
+/**
+ * The arguments of an earlier tool call as they are sent back to the model. Servers check that they are valid JSON, and one
+ * that is not (a call cut off by the token limit) makes the whole request fail with an HTTP 500, so a short valid
+ * stand-in is sent instead of the broken text, which may also be tens of thousands of characters long.
+ */
 export function argsOrEmptyObject(s: string | undefined): string {
   const t = (s ?? '').trim()
-  return t === '' ? '{}' : t
+  if (t === '') return '{}'
+  try {
+    JSON.parse(t)
+    return t
+  } catch {
+    return CUT_OFF_ARGS
+  }
 }
 
 /**

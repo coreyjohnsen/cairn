@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { argsOrEmptyObject } from '../src/main/providers/convert'
 import { OpenAIProvider, normalizeOpenAIBase } from '../src/main/providers/openai'
 import type { StreamEvent } from '../src/main/providers/types'
 import { type MockServer, startMockOpenAI } from './helpers/mockOpenAI'
@@ -78,6 +79,30 @@ describe('OpenAIProvider', () => {
     const sent = server.requests[0].messages
     expect(sent[2].tool_calls[0].function.arguments).toBe('{}')
     expect(sent.filter((m: any) => m.role === 'tool').map((m: any) => m.tool_call_id)).toEqual(['c1', 'c2'])
+  })
+
+  // Servers such as llama.cpp parse the arguments of earlier calls and answer HTTP 500 when they are not valid JSON. A call that
+  // was cut off by the token limit is stored as it arrived, so it must not be sent back as it is.
+  it('sends valid JSON in place of the arguments of a call that was cut off', async () => {
+    server = await startMockOpenAI([{ text: ['ok'] }])
+    const p = new OpenAIProvider({ id: 'x', baseUrl: server.url, apiKey: '', headers: {} })
+    const cut = `{"path":"index.html","content":"<!DOCTYPE html>${'x'.repeat(30000)}`
+    await run(p, {
+      messages: [
+        msg('go'),
+        { id: '2', role: 'assistant', createdAt: 0, content: '', toolCalls: [{ id: 'c1', name: 'write_file', arguments: cut }] },
+        { id: '3', role: 'tool', createdAt: 0, content: 'cut off', toolCallId: 'c1', toolName: 'write_file', isError: true }
+      ]
+    })
+    const sentArgs = server.requests[0].messages[2].tool_calls[0].function.arguments
+    expect(() => JSON.parse(sentArgs)).not.toThrow()
+    expect(sentArgs.length).toBeLessThan(300)
+    expect(JSON.parse(sentArgs)._note).toMatch(/cut off/)
+  })
+
+  it('leaves complete arguments alone', () => {
+    expect(argsOrEmptyObject('{"a":1}')).toBe('{"a":1}')
+    expect(argsOrEmptyObject('  ')).toBe('{}')
   })
 })
 
