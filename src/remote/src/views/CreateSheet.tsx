@@ -1,9 +1,12 @@
-import { ChevronDown, Dices, ImagePlus, Sparkles, Upload, X } from 'lucide-react'
+import { Brush, ChevronDown, Dices, Eraser, ImagePlus, Sparkles, Upload, X } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { Button, Segmented, Spinner, Switch } from '@/components/ui'
+import { Button, Segmented, Spinner } from '@/components/ui'
 import { invoke, mediaUrl } from '@/lib/api'
 import { cx, errorText } from '@/lib/format'
-import { RATIOS, SAMPLERS } from '@/lib/imageSize'
+import { isClear } from '@/lib/imageForm'
+import { SAMPLERS } from '@/lib/imageSize'
+import { loraSectionShown } from '@/components/LoraPicker'
+import { strengthLabel } from '@shared/img2img'
 import { useApp } from '@/store/app'
 import { useImages } from '@/store/images'
 import { useHub } from '@/views/images/useHub'
@@ -11,6 +14,7 @@ import { Sheet } from '../components/Sheet'
 import { shrinkPhoto } from '../lib/photo'
 import { useNav } from '../store/nav'
 import { targetKeyOf } from '@/store/images'
+import { LoraSection, SizeSection, UpscaleSection } from './CreateExtras'
 
 function PicturePicker({ open, onClose }: { open: boolean; onClose: () => void }) {
   const records = useImages((s) => s.records)
@@ -68,7 +72,9 @@ export function CreateSheet() {
   const targets = useImages((s) => s.targets)
   const setForm = useImages((s) => s.setForm)
   const hub = useHub()
-  const { form, target, ready, editing, pic, imageOk, unsupportedHint, size0, negative, stepsDefault, cfgDefault, blocked, busyJobs, submit } = hub
+  const { form, target, ready, editing, pic, imageOk, maskOk, like, unsupportedHint, negative, stepsDefault, cfgDefault, blocked, busyJobs, submit } = hub
+  const clearForm = useImages((s) => s.clearForm)
+  const openLayer = useNav((s) => s.open)
   const [picking, setPicking] = useState(false)
   const [more, setMore] = useState(false)
   const [sending, setSending] = useState(false)
@@ -111,6 +117,11 @@ export function CreateSheet() {
           </div>
         }
       >
+        {!isClear(form) && (
+          <button type="button" className="link-btn create-clear" onClick={clearForm}>
+            <Eraser size={13} /> Clear everything
+          </button>
+        )}
         <div className="field-group">
           <label className="fld-label" htmlFor="create-prompt">
             {editing ? 'What should it become?' : 'What should it look like?'}
@@ -141,17 +152,37 @@ export function CreateSheet() {
               <ImagePlus size={17} /> <span>Start from a picture</span>
             </button>
           )}
+          {editing && pic && maskOk && (
+            <div className="mask-card">
+              <button type="button" className="btn btn-secondary start-pick" onClick={() => openLayer('paint')}>
+                <Brush size={17} /> <span>{form.mask ? 'Change the painted part' : 'Paint the part to change'}</span>
+              </button>
+              {form.mask ? (
+                <div className="mask-meta">
+                  <img src={form.mask.preview} alt="" />
+                  <span className="small dim">Only the painted {Math.max(1, Math.round(form.mask.coverage * 100))}% changes.</span>
+                  <button type="button" className="link-btn" onClick={() => setForm({ mask: undefined })}>
+                    Remove paint
+                  </button>
+                </div>
+              ) : (
+                <p className="faint xs mask-help">Nothing painted, so the whole picture is redone.</p>
+              )}
+            </div>
+          )}
+          {editing && pic && imageOk && !maskOk && <p className="small warn-text">This model cannot repaint just part of a picture, so the whole picture will be redone.</p>}
           {editing && pic && (
             <div className="strength">
               <div className="row between small">
-                <span>How much to change</span>
+                <span>{form.mask ? 'Change inside the paint' : 'How much to change'}</span>
                 <span className="mono dim">{Math.round(form.strength * 100)}%</span>
               </div>
-              <input type="range" min={0.1} max={1} step={0.05} value={form.strength} onChange={(e) => setForm({ strength: Number(e.target.value) })} aria-label="How much to change" />
+              <input type="range" min={0.05} max={1} step={0.05} value={form.strength} onChange={(e) => setForm({ strength: Number(e.target.value) })} aria-label="How much to change" />
               <div className="row between faint xs">
                 <span>Keep the look</span>
                 <span>Repaint it</span>
               </div>
+              <p className="faint xs">{strengthLabel(form.strength)}</p>
             </div>
           )}
           {editing && !imageOk && unsupportedHint && <p className="small warn-text">{unsupportedHint}</p>}
@@ -176,23 +207,11 @@ export function CreateSheet() {
           {!ready && targets.length > 0 && <p className="small warn-text">That model is not ready on your computer. Pick another, or open Cairn there.</p>}
         </div>
 
-        {!(editing && pic) && (
-          <div className="field-group">
-            <div className="fld-label">
-              Shape <span className="faint xs">· {size0.width} × {size0.height}</span>
-            </div>
-            <Segmented
-              fill
-              value={form.ratio}
-              onChange={(ratio) => setForm({ ratio })}
-              options={RATIOS.filter((r) => r.id !== 'custom').map((r) => ({ value: r.id, label: r.id === 'auto' ? 'Auto' : r.label }))}
-            />
-          </div>
-        )}
+        <SizeSection form={form} setForm={setForm} target={target} like={like} />
 
         <div className="field-group">
           <div className="fld-label">How many</div>
-          <Segmented fill value={String(form.count)} onChange={(v) => setForm({ count: Number(v) })} options={['1', '2', '3', '4'].map((n) => ({ value: n, label: n }))} />
+          <Segmented fill value={String(form.count)} onChange={(v) => setForm({ count: Number(v) })} options={['1', '2', '4', '8'].map((n) => ({ value: n, label: n }))} />
         </div>
 
         <button type="button" className={cx('more-toggle', more && 'open')} onClick={() => setMore((m) => !m)} aria-expanded={more}>
@@ -252,15 +271,9 @@ export function CreateSheet() {
                 </div>
               </div>
             </div>
-            {hub.usable.length > 0 && (
-              <div className="row between switch-row">
-                <span>Make it bigger when done</span>
-                <Switch
-                  checked={!!hub.upscaleValue}
-                  label="Make it bigger when done"
-                  onChange={(on) => setForm(on ? { upscale: { path: hub.chosenUpscaler?.path ?? hub.usable[0].path, repeats: 1 }, upscaleOff: false } : { upscale: undefined, upscaleOff: true })}
-                />
-              </div>
+            {loraSectionShown(target, form.loras) && <LoraSection target={target} value={form.loras} onChange={(loras) => setForm({ loras })} />}
+            {!!target && (target.supportsLora || hub.usable.length > 0) && (
+              <UpscaleSection usable={hub.usable} value={hub.upscaleValue} onChange={(upscale) => setForm({ upscale, upscaleOff: upscale ? undefined : true })} width={hub.size0.width || hub.d?.width} height={hub.size0.height || hub.d?.height} />
             )}
           </div>
         )}

@@ -10,6 +10,7 @@ import { ChatScreen } from './ChatScreen'
 import { ChatsList } from './ChatsList'
 import { CreateSheet } from './CreateSheet'
 import { ModelSheet } from './ModelSheet'
+import { PaintScreen } from './PaintScreen'
 import { PicturesScreen } from './PicturesScreen'
 import { Viewer } from './Viewer'
 import { YouScreen } from './YouScreen'
@@ -96,6 +97,7 @@ export function Shell() {
       <Viewer />
       <CreateSheet />
       <ModelSheet />
+      <PaintScreen />
     </div>
   )
 }

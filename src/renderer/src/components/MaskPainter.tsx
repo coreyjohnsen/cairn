@@ -67,6 +67,9 @@ export const MaskPainter = forwardRef<PainterApi, Props>(function MaskPainter({ 
   const drag = useRef<Drag | null>(null)
   const hover = useRef<Pt | null>(null)
   const space = useRef(false)
+  // Fingers on the screen: two of them zoom and move the picture instead of painting.
+  const fingers = useRef(new Map<number, { x: number; y: number }>())
+  const pinch = useRef<{ dist: number; cx: number; cy: number } | null>(null)
   const touched = useRef(false)
   const view = useRef<View>({ s: 1, tx: 0, ty: 0 })
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -280,7 +283,27 @@ export const MaskPainter = forwardRef<PainterApi, Props>(function MaskPainter({ 
     return { sx: e.clientX - r.left, sy: e.clientY - r.top }
   }
 
+  const pinchGeometry = () => {
+    const [a, b] = [...fingers.current.values()]
+    return { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 }
+  }
+
   const onDown = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch') {
+      const r = viewport.current!.getBoundingClientRect()
+      fingers.current.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top })
+      if (fingers.current.size === 2) {
+        // The first finger already put a dot down: take it back and switch to moving the picture.
+        if (drag.current?.kind === 'stroke' || drag.current?.kind === 'rect' || drag.current?.kind === 'lasso') redraw()
+        drag.current = null
+        viewport.current!.setPointerCapture(e.pointerId)
+        pinch.current = pinchGeometry()
+        touched.current = true
+        drawOverlay()
+        return
+      }
+      if (fingers.current.size > 2) return
+    }
     const { sx, sy } = local(e)
     const t = live.current.tool
     const panning = e.button === 1 || space.current || t === 'move'
@@ -304,6 +327,22 @@ export const MaskPainter = forwardRef<PainterApi, Props>(function MaskPainter({ 
   }
 
   const onMove = (e: React.PointerEvent) => {
+    if (fingers.current.has(e.pointerId)) {
+      const r = viewport.current!.getBoundingClientRect()
+      fingers.current.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top })
+    }
+    if (pinch.current && fingers.current.size >= 2) {
+      const prev = pinch.current
+      const now = pinchGeometry()
+      const r = viewport.current!.getBoundingClientRect()
+      const fitted = fitView(r.width, r.height, W, H).s
+      const moved = { ...view.current, tx: view.current.tx + (now.cx - prev.cx), ty: view.current.ty + (now.cy - prev.cy) }
+      view.current = zoomAt(moved, now.dist / prev.dist, now.cx, now.cy, fitted * 0.5, 24)
+      pinch.current = now
+      place()
+      drawOverlay()
+      return
+    }
     const { sx, sy } = local(e)
     const p = toPicture(view.current, sx, sy)
     hover.current = p
@@ -326,7 +365,13 @@ export const MaskPainter = forwardRef<PainterApi, Props>(function MaskPainter({ 
     drawOverlay()
   }
 
-  const onUp = () => {
+  const onUp = (e: React.PointerEvent) => {
+    if (fingers.current.delete(e.pointerId) && pinch.current) {
+      if (fingers.current.size < 2) pinch.current = null
+      drag.current = null
+      drawOverlay()
+      return
+    }
     const d = drag.current
     drag.current = null
     if (d?.kind === 'stroke') {
