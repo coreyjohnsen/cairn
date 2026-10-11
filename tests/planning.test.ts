@@ -252,7 +252,7 @@ afterEach(async () => {
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
-async function setup(script: ScriptedTurn[]) {
+async function setup(script: ScriptedTurn[], extra: Partial<RunnerDeps> = {}) {
   server = await startMockOpenAI(script)
   const provider = new OpenAIProvider({ id: 'p', baseUrl: server.url, apiKey: '', headers: {} })
   const deps: RunnerDeps = {
@@ -269,7 +269,8 @@ async function setup(script: ScriptedTurn[]) {
     approvals,
     images: { available: () => false, generate: async () => [] },
     attachments: { save: async () => { throw new Error('unused') }, load: async () => null },
-    emit: (e) => events.push(e)
+    emit: (e) => events.push(e),
+    ...extra
   }
   const runner = new ChatRunner(deps)
   return { runner, conv: store.create({}) }
@@ -487,5 +488,110 @@ describe('the project map in a chat', () => {
     await runner.send({ conversationId: conv.id, text: 'hello' })
     await waitEnd(conv.id)
     expect(systemOf(server!.requests[0])).not.toContain('## Project map')
+  })
+})
+
+describe('checking work as it is written', () => {
+  const call = (id: string, name: string, args: object) => ({ id, name, args: JSON.stringify(args) })
+
+  it('tells the model at once when a file it wrote does not parse', async () => {
+    settings.agent.toolPermissions = { write_file: 'auto', edit_file: 'auto' }
+    const { runner, conv } = await setup([
+      { toolCalls: [call('c1', 'write_file', { path: 'roster.js', content: "const a = f(x));\n" })] },
+      { toolCalls: [call('c2', 'write_file', { path: 'good.js', content: 'const a = 1\n' })] },
+      { text: ['done'] },
+      { text: ['T'] }
+    ])
+    await runner.send({ conversationId: conv.id, text: 'go' })
+    await waitEnd(conv.id)
+    const results = store.get(conv.id)!.messages.filter((m) => m.role === 'tool')
+    expect(results[0].isError).toBeFalsy()
+    expect(results[0].content).toContain('Created roster.js')
+    expect(results[0].content).toContain('[Check failed: JavaScript syntax of roster.js')
+    expect(results[1].content).not.toContain('Check failed')
+    // The model reads it in its next request.
+    expect(JSON.stringify(server!.requests[1].messages)).toContain('Check failed')
+  })
+
+  it('tells the model to stop guessing when the same file fails the same check twice', async () => {
+    settings.agent.toolPermissions = { write_file: 'auto' }
+    const { runner, conv } = await setup([
+      { toolCalls: [call('c1', 'write_file', { path: 'a.json', content: '{"a":' })] },
+      { toolCalls: [call('c2', 'write_file', { path: 'a.json', content: '{"a":,}' })] },
+      { text: ['hm'] },
+      { text: ['T'] }
+    ])
+    await runner.send({ conversationId: conv.id, text: 'go' })
+    await waitEnd(conv.id)
+    const results = store.get(conv.id)!.messages.filter((m) => m.role === 'tool')
+    expect(results[0].content).toContain('Check failed')
+    expect(results[0].content).not.toContain('second time')
+    expect(results[1].content).toContain('second time')
+    expect(results[1].content).toContain('file_outline')
+  })
+
+  it('does the same for a tool that keeps failing, and not for different files', async () => {
+    const { runner, conv } = await setup([
+      { toolCalls: [call('c1', 'read_file', { path: 'nope.txt' })] },
+      { toolCalls: [call('c2', 'read_file', { path: 'nope.txt' })] },
+      { toolCalls: [call('c3', 'read_file', { path: 'other.txt' })] },
+      { text: ['hm'] },
+      { text: ['T'] }
+    ])
+    await runner.send({ conversationId: conv.id, text: 'go' })
+    await waitEnd(conv.id)
+    const results = store.get(conv.id)!.messages.filter((m) => m.role === 'tool')
+    expect(results.map((r) => r.content.includes('second time'))).toEqual([false, true, false])
+  })
+
+  it('run_page goes to the browser the app provides and its errors come back to the model', async () => {
+    fs.writeFileSync(path.join(ws, 'index.html'), '<html><body></body></html>')
+    let opened = ''
+    const { runner, conv } = await setup(
+      [{ toolCalls: [call('c1', 'run_page', { path: 'index.html', click: ['#go'] })] }, { text: ['fixing'] }, { text: ['T'] }],
+      {
+        runPage: async (url) => {
+          opened = url
+          return { url, title: '', errors: ['Uncaught ReferenceError: API is not defined (js/app.js:3)'], warnings: [], failedRequests: [], text: '', clicks: [{ selector: '#go', found: false }], expected: [] }
+        }
+      }
+    )
+    settings.agent.toolPermissions = { run_page: 'auto' }
+    await runner.send({ conversationId: conv.id, text: 'check the page' })
+    await waitEnd(conv.id)
+    const r = store.get(conv.id)!.messages.find((m) => m.role === 'tool')!
+    expect(opened).toMatch(/^file:\/\/.*index\.html$/)
+    expect(r.isError).toBe(true)
+    expect(r.content).toContain('API is not defined')
+    expect(r.content).toContain('could not click "#go"')
+  })
+
+  it('offers the checking tools and tells a building model to use them', async () => {
+    const { runner, conv } = await setup([{ text: ['ok'] }, { text: ['T'] }])
+    store.get(conv.id)!.plan = { goal: 'G', steps: [{ id: 's1', text: 'a.js', status: 'doing', verify: 'node --check a.js' }], updatedAt: 1 }
+    await runner.send({ conversationId: conv.id, text: '/build' })
+    await waitEnd(conv.id)
+    const first = server!.requests[0]
+    expect(toolNames(first)).toEqual(expect.arrayContaining(['set_step_status', 'check_references', 'run_page']))
+    const sys = systemOf(first)
+    expect(sys).toContain('set_step_status')
+    expect(sys).toContain('(check: node --check a.js)')
+    expect(sys).toContain('run_page')
+    expect(sys).toMatch(/fetch a real sample/)
+    expect(sys).toMatch(/Never invent data/)
+  })
+
+  it('planning mode asks for real samples, interfaces and a check for every step', async () => {
+    const { runner, conv } = await setup([{ text: ['ok'] }, { text: ['T'] }])
+    await runner.send({ conversationId: conv.id, text: '/plan a dashboard for a web API' })
+    await waitEnd(conv.id)
+    const first = server!.requests[0]
+    const sys = systemOf(first)
+    expect(sys).toMatch(/REAL sample response/)
+    expect(sys).toMatch(/Interfaces:/)
+    expect(sys).toMatch(/"verify" command/)
+    expect(sys).toMatch(/thin slice/)
+    expect(toolNames(first)).toContain('check_references')
+    expect(toolNames(first)).not.toContain('run_page')
   })
 })

@@ -54,6 +54,7 @@ export function PlanCard({ conv, running, canClear = true, canBuild = true }: { 
                 <li key={s.id} className={cx('plan-step', s.status)} title={LABEL[s.status]}>
                   <Icon size={14} aria-label={LABEL[s.status]} />
                   <span>{s.text}</span>
+                  {s.verified && <span className="plan-verified" title={`Checked: ${s.verify}`}> ✓ checked</span>}
                 </li>
               )
             })}

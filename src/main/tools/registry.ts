@@ -8,6 +8,7 @@ import { projectIndexTools } from './projectIndex'
 import type { McpManager } from './mcp'
 import { shellTools } from './shell'
 import type { ToolImpl } from './types'
+import { verifyTools } from './verify'
 import { webTools } from './web'
 
 /** Tools the assistant only gets when the user asks for them with a command. */
@@ -45,6 +46,7 @@ export class ToolRegistry {
     for (const t of [...fsTools(), ...shellTools(), ...webTools()]) add(t)
     for (const t of projectIndexTools()) add(t)
     for (const t of planningTools()) add(t)
+    for (const t of verifyTools()) add(t)
     for (const t of imageTools()) add(t, imageAvailable, imageAvailable ? undefined : 'Set up an image model first (Models → Image models)')
 
     for (const cfg of settings.customTools) {

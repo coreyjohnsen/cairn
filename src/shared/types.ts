@@ -147,6 +147,10 @@ export interface PlanStep {
   id: string
   text: string
   status: PlanStatus
+  /** A command that proves the step works (run when the step is marked done; the step stays open if it fails). */
+  verify?: string
+  /** The step was marked done after its `verify` command passed. */
+  verified?: boolean
 }
 
 /**
