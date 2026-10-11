@@ -131,6 +131,30 @@ describe('ChatRunner', () => {
     expect(server!.requests[0].messages[0].content).toContain(ws)
   })
 
+  // The call is shown, and can run, only when the model has sent all of it. For a whole file that takes minutes, and the
+  // chat used to sit silent after the model's last sentence. The window is told what is being written meanwhile.
+  it('reports what a tool call is about while the model is still writing it', async () => {
+    settings.agent.toolPermissions = { write_file: 'auto' }
+    const args = JSON.stringify({ path: 'big/snake.html', content: '<!doctype html>' + 'x'.repeat(4000) })
+    const { runner, conv } = await setup([{ toolCalls: [{ id: 'call_w', name: 'write_file', args }] }, { text: ['Done.'] }])
+    await runner.send({ conversationId: conv.id, text: 'make me a snake game in one html file' })
+    expect((await waitEnd(conv.id)).outcome).toBe('done')
+    const streams = events.filter((e): e is Extract<ChatEvent, { type: 'tool-stream' }> => e.type === 'tool-stream')
+    expect(streams.length).toBeGreaterThan(0)
+    const last = streams[streams.length - 1]
+    expect(last.calls).toHaveLength(1)
+    expect(last.calls[0]).toMatchObject({ name: 'write_file', chars: args.length })
+    // Enough to name the file, not the whole file.
+    expect(last.calls[0].head.startsWith('{"path":"big/snake.html"')).toBe(true)
+    expect(last.calls[0].head.length).toBeLessThanOrEqual(400)
+    // Characters only grow, and the finished message (which carries the call) comes after the last report.
+    const sizes = streams.map((e) => e.calls[0].chars)
+    expect(sizes).toEqual([...sizes].sort((a, b) => a - b))
+    const after = events.slice(events.lastIndexOf(last) + 1)
+    expect(after.some((e) => e.type === 'message' && e.message.id === last.messageId && !!e.message.toolCalls?.length)).toBe(true)
+    expect(store.get(conv.id)!.messages.find((m) => m.id === last.messageId)?.toolCalls?.[0].name).toBe('write_file')
+  })
+
   it('asks for approval, and a denial reaches the model without running the tool', async () => {
     const { runner, conv } = await setup([
       { toolCalls: [{ id: 'c1', name: 'write_file', args: '{"path":"danger.txt","content":"x"}' }] },

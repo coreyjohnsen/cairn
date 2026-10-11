@@ -54,6 +54,22 @@ export function summarizeTool(name: string, rawArgs: string): ToolSummary {
   }
 }
 
+/** What a call that is still being written is about. Read from the start of its arguments, which are not valid JSON yet. */
+export function summarizeStreaming(name: string, head: string): ToolSummary {
+  const wanted = ['path', 'from', 'to', 'command', 'pattern', 'glob', 'url', 'query', 'prompt']
+  const found: Record<string, string> = {}
+  for (const m of head.matchAll(/"([A-Za-z_]+)"\s*:\s*"((?:[^"\\]|\\.)*)(?:"|$)/g)) {
+    const key = m[1]
+    if (!wanted.includes(key) || key in found) continue
+    try {
+      found[key] = JSON.parse(`"${m[2]}"`) as string
+    } catch {
+      found[key] = m[2] // cut off in the middle of an escape
+    }
+  }
+  return summarizeTool(name, JSON.stringify(found))
+}
+
 /** "Reading", "Editing" … while the call is in flight. */
 export function presentTense(verb: string): string {
   const map: Record<string, string> = {

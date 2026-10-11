@@ -1,5 +1,5 @@
 import { AlertCircle, Brain, ChevronRight, Copy, FileText, Info, Pencil, RotateCcw, Scissors } from 'lucide-react'
-import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Attachment, ChatMessage, Compaction, Conversation, ImageRef, ToolProgress } from '@shared/types'
 import { mediaUrl } from '@/lib/api'
 import { cx, formatBytes, formatDuration } from '@/lib/format'
@@ -8,7 +8,7 @@ import { useComposerBus } from '@/store/composer'
 import { useImages } from '@/store/images'
 import { SummaryModal } from './ContextMeter'
 import { Markdown } from './Markdown'
-import { ToolCard } from './ToolCard'
+import { ToolCard, ToolWriting } from './ToolCard'
 import { ImageProgress } from './ImageProgress'
 import { Button, IconButton, Modal } from './ui'
 
@@ -93,6 +93,8 @@ function AttachmentChips({ items }: { items: Attachment[] }) {
 function Reasoning({ text, streaming }: { text: string; streaming: boolean }) {
   const [open, setOpen] = useState(false)
   const shown = open || (streaming && !!text)
+  // Thoughts can run long and grow on every frame while they stream: the formatted text may trail a moment behind so the screen keeps up.
+  const formatted = useDeferredValue(text)
   return (
     <div className={cx('reasoning', shown && 'open')}>
       <button type="button" className="reasoning-head" onClick={() => setOpen((o) => !o)} aria-expanded={shown}>
@@ -100,7 +102,11 @@ function Reasoning({ text, streaming }: { text: string; streaming: boolean }) {
         <span>{streaming ? 'Thinking…' : 'Reasoning'}</span>
         <ChevronRight size={14} className="chev" />
       </button>
-      {shown && <div className="reasoning-body selectable">{text}</div>}
+      {shown && (
+        <div className="reasoning-body">
+          <Markdown text={formatted} />
+        </div>
+      )}
     </div>
   )
 }
@@ -163,6 +169,7 @@ interface AssistantProps {
 const AssistantMessage = memo(function AssistantMessage({ m, results, live, showModel, footer, progress, canRegenerate }: AssistantProps) {
   const regenerate = useChat((s) => s.regenerate)
   const streaming = m.status === 'streaming'
+  const writing = useChat((s) => (streaming ? s.toolStream[m.id]?.calls : undefined))
   const hasBody = !!m.content || !!m.reasoning || !!m.toolCalls?.length || !!m.notice || !!m.error
   const u = m.usage
   return (
@@ -170,7 +177,8 @@ const AssistantMessage = memo(function AssistantMessage({ m, results, live, show
       {showModel && m.model && <div className="msg-model">{m.model}</div>}
       {m.reasoning && <Reasoning text={m.reasoning} streaming={streaming && !m.content} />}
       {m.content && <Markdown text={m.content} />}
-      {streaming && !m.content && !m.reasoning && !m.toolCalls?.length && <Typing />}
+      {streaming && !m.content && !m.reasoning && !m.toolCalls?.length && !writing?.length && <Typing />}
+      {writing && writing.length > 0 && <ToolWriting calls={writing} />}
       {m.toolCalls?.map((tc) => {
         const r = results.get(tc.id)
         const imgs = r?.images

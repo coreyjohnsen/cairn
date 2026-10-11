@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ApprovalDecision, ApprovalRequest, AttachmentInput, ChatEvent, ChatMessage, Conversation, ConversationPatch, ConversationSummary, ToolProgress } from '@shared/types'
+import type { ApprovalDecision, ApprovalRequest, AttachmentInput, ChatEvent, ChatMessage, Conversation, ConversationPatch, ConversationSummary, ToolProgress, ToolStream } from '@shared/types'
 import { invoke, on } from '@/lib/api'
 import { subscribeOnce } from '@/lib/subscribeOnce'
 import { DeltaBatch } from '@/lib/deltaBatch'
@@ -16,6 +16,8 @@ interface ChatState {
   approvals: Record<string, ApprovalRequest[]>
   status: Record<string, string>
   progress: Record<string, ToolProgress>
+  /** Tool calls a model is still writing, by the message that holds them. They appear in the message only when complete. */
+  toolStream: Record<string, { conv: string; calls: ToolStream[] }>
   runError: Record<string, string>
   /** Settings picked before the first message of a new chat; applied when the chat is created. */
   draft: ConversationPatch
@@ -83,6 +85,7 @@ export const useChat = create<ChatState>()((set, get) => {
     approvals: {},
     status: {},
     progress: {},
+    toolStream: {},
     runError: {},
     draft: {},
 
@@ -261,6 +264,7 @@ export const useChat = create<ChatState>()((set, get) => {
         case 'run-end':
           flushDeltas()
           set((s) => ({
+            toolStream: Object.fromEntries(Object.entries(s.toolStream).filter(([, v]) => v.conv !== e.conversationId)),
             running: { ...s.running, [e.conversationId]: false },
             approvals: { ...s.approvals, [e.conversationId]: [] },
             status: { ...s.status, [e.conversationId]: '' },
@@ -268,7 +272,17 @@ export const useChat = create<ChatState>()((set, get) => {
           }))
           void get().refreshList()
           break
+        case 'tool-stream':
+          set((s) => ({ toolStream: { ...s.toolStream, [e.messageId]: { conv: e.conversationId, calls: e.calls } } }))
+          break
         case 'message':
+          // The finished message carries the tool calls themselves.
+          if (e.message.status !== 'streaming' && get().toolStream[e.message.id]) {
+            set((s) => {
+              const { [e.message.id]: _done, ...rest } = s.toolStream
+              return { toolStream: rest }
+            })
+          }
           // A message snapshot already contains every token sent before it. Deltas still waiting for the
           // next animation frame would be added on top of it, repeating the last words of the reply.
           deltas.drop(e.message.id)

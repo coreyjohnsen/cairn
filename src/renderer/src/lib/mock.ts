@@ -226,7 +226,8 @@ function seedConversations(): void {
       messages: [
         { id: 'm0', role: 'user', createdAt: now - 16 * MIN, content: 'The README is out of date and the sort script has a bug with accented names. Can you fix both?' },
         demoAssistant('m1', {
-          reasoning: 'The user wants two changes. I should read the README and the sort script first, then make small targeted edits and run the tests.',
+          reasoning:
+            '## Plan\n\nThe user wants **two changes**:\n\n1. Bring the README usage section in line with the script\n2. Fix the *accented names* bug in `sort_names.py`\n\nChecking the README first.\nThen the sort script.\n\nThe bug is probably in how names are compared, something like:\n\n```python\nsorted(names, key=lambda n: unicodedata.normalize(\'NFKD\', n))\n```\n\n> Small targeted edits, then run the tests.',
           content: 'I will start by reading both files.',
           toolCalls: [
             { id: 'call_a', name: 'read_file', arguments: JSON.stringify({ path: 'README.md' }) },
@@ -487,8 +488,23 @@ async function runChat(conv: Conversation, text: string, mode: 'chat' | 'image' 
       const a1: ChatMessage = { id: newId('m_'), role: 'assistant', createdAt: Date.now(), content: '', status: 'streaming', model: 'Qwen3-8B-Q4_K_M', reasoning: '' }
       push(a1)
       chatEvent({ type: 'status', runId, conversationId: conv.id, status: 'Thinking…' })
+      // The thinking arrives first, formatted as the model writes it.
+      const thought = '**Goal:** make the usage section match the script.\n\n- The README still says `python sort.py notes/`\n- The script is now `scripts/sort_names.py`\n\nA single `edit_file` call should be enough.'
+      for (let i = 0; i < thought.length; i += 14) {
+        if (ctl.signal.aborted) throw new Error('aborted')
+        chatEvent({ type: 'delta', runId, conversationId: conv.id, messageId: a1.id, reasoning: thought.slice(i, i + 14) })
+        await sleep(45)
+      }
+      a1.reasoning = thought
       await streamText(conv, runId, a1, 'I will update the README so the usage section matches the script.', ctl.signal)
       a1.content = 'I will update the README so the usage section matches the script.'
+      // The call arrives piece by piece; the window says what is being written until it is complete.
+      const head = '{"path": "README.md", "old_string": "python sort.py notes/", "new_string": "python scripts/sort_names.py notes/"}'
+      for (let chars = 0; chars <= 4200; chars += 350) {
+        if (ctl.signal.aborted) throw new Error('aborted')
+        chatEvent({ type: 'tool-stream', runId, conversationId: conv.id, messageId: a1.id, calls: [{ name: 'edit_file', chars, head: head.slice(0, Math.max(0, Math.min(head.length, chars / 3))) }] })
+        await sleep(450)
+      }
       a1.toolCalls = [{ id: callId, name: 'edit_file', arguments: JSON.stringify({ path: 'README.md', old_string: 'python sort.py notes/', new_string: 'python scripts/sort_names.py notes/' }) }]
       a1.status = 'done'
       push({ ...a1 })
