@@ -1,4 +1,4 @@
-import { AlertTriangle, Dices, ImagePlus, PanelLeftClose, RotateCcw } from 'lucide-react'
+import { AlertTriangle, Dices, Eraser, ImagePlus, PanelLeftClose, RotateCcw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { LoraPicker, UpscalePicker, loraSectionShown } from '@/components/LoraPicker'
 import { Resizer } from '@/components/Resizer'
@@ -6,6 +6,7 @@ import { SizeControls, sizeNotes } from '@/components/SizeControls'
 import { Button, Disclosure, Field, IconButton, Notice, NumberField, Segmented, Select, Slider, Spinner, TextField } from '@/components/ui'
 import { resolveFocus } from '@/lib/focus'
 import { cx } from '@/lib/format'
+import { isClear } from '@/lib/imageForm'
 import { SAMPLERS } from '@/lib/imageSize'
 import { firstPicture } from '@/lib/pictureFile'
 import { useApp } from '@/store/app'
@@ -23,6 +24,7 @@ export function CreatePanel() {
   const toast = useApp((s) => s.toast)
   const update = useApp((s) => s.update)
   const setForm = useImages((s) => s.setForm)
+  const clearForm = useImages((s) => s.clearForm)
   const targets = useImages((s) => s.targets)
   const loading = useImages((s) => s.targetsLoading)
   const refreshTargets = useImages((s) => s.refreshTargets)
@@ -131,6 +133,9 @@ export function CreatePanel() {
                 <Spinner size={11} /> {busyJobs} in progress
               </span>
             )}
+            <Button variant="ghost" size="sm" icon={<Eraser size={14} />} disabled={isClear(form)} onClick={clearForm} title="Empty the prompt and put every box back to its default. The chosen model stays.">
+              Clear
+            </Button>
             <IconButton label="Hide this panel (Ctrl+B)" size="sm" onClick={() => toggle('create')}>
               <PanelLeftClose size={16} />
             </IconButton>

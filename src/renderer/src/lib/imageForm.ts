@@ -46,6 +46,18 @@ export interface HubForm {
 
 export const DEFAULT_FORM: HubForm = { prompt: '', targetKey: '', ratio: 'auto', customW: 1024, customH: 1024, scale: 1, seed: -1, count: 1, startMode: 'text', strength: 0.6, inpaintArea: 'masked', feather: 12, padding: 64, loras: [] }
 
+/** What "Clear" puts back: everything filled in, but not which model is chosen or how many pictures to make. */
+export function clearedForm(form: HubForm): HubForm {
+  return { ...DEFAULT_FORM, targetKey: form.targetKey, count: form.count }
+}
+
+/** Nothing to clear: the form already holds only defaults. */
+export function isClear(form: HubForm): boolean {
+  const a: Record<string, unknown> = { ...form, mask: !!form.mask }
+  const b: Record<string, unknown> = { ...clearedForm(form), mask: false }
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])].every((k) => JSON.stringify(a[k]) === JSON.stringify(b[k]))
+}
+
 /** The form after a change. Picking a different picture to edit means the paint (made for the old one) no longer applies. */
 export function formAfterPatch(form: HubForm, patch: Partial<HubForm>): { form: HubForm; newBase: boolean } {
   const newBase = 'initImageId' in patch && patch.initImageId !== form.initImageId
