@@ -147,6 +147,17 @@ With tools on, the assistant works in an organised way instead of jumping straig
 
 Commands work from a paired phone too, when it has been given tool access.
 
+## Project index
+
+So the assistant sees what a project already has instead of searching text blindly, Cairn keeps an index of the working folder's code: what each file defines (functions, classes, methods, types, constants), which files import which, and which names are used where. It reads TypeScript and JavaScript (including `<script>` blocks in HTML, Vue and Svelte), Python, Go, Rust, Java, Kotlin, C#, C and C++, Ruby and PHP. It needs no model, runs in a fraction of a second, skips `node_modules`, `dist`, `build` and similar folders, and is rebuilt from the files each time it is used, so the assistant's own edits show immediately. `@/…` style import aliases are read from `tsconfig.json`.
+
+- **Project map.** A short overview is added to the system prompt: the folders with the most files, then the most-used files with what they define. It is sized to the model's memory.
+- **`find_symbol`**: where a function, class, type or method is defined, by name (part of a name or `Class.method` works), with file and line.
+- **`file_outline`**: what one file defines, what it imports and what imports it, much cheaper than reading it.
+- **`find_usages`**: every line that uses a name, as a whole word, with the definition marked; used before renaming, moving or deleting something.
+
+The tools are on by default and can be switched off under Tools; with `find_symbol` off the map is left out too. The index is made from patterns and indentation rather than a full parser, so unusually formatted code may be partly missed; `search_files` still covers that.
+
 ## Window and layout
 
 Side panels can be resized: drag the thin line on the edge of the chat list, the Image Hub's create panel, its History list or the full-screen viewer's details (double-click the line to put it back, or focus it and use the arrow keys). Ctrl+B folds or shows the side panel of the current screen (the chat list or the create panel), and each has a button to do the same. Widths and which panels are folded are remembered on this computer. The chat column, the pages under Models, Tools and Settings, and the Image Hub's big picture all grow with the window, and the chat column grows further when the chat list is folded. On Windows, the minimise, maximise and close buttons are drawn over the top-right corner of the window; the mask editor's toolbar, dialogs and the welcome screen keep clear of them.

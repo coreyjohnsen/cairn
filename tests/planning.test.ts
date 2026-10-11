@@ -7,6 +7,7 @@ import { messageTokens } from '../src/main/agent/context'
 import { toolsForMode } from '../src/main/agent/modes'
 import { readNotes } from '../src/main/agent/notes'
 import { buildSystemPrompt } from '../src/main/agent/prompt'
+import { CodeIndexRegistry } from '../src/main/codeindex/index'
 import { ChatRunner, type RunnerDeps } from '../src/main/agent/runner'
 import { ConversationStore } from '../src/main/conversations'
 import { OpenAIProvider } from '../src/main/providers/openai'
@@ -261,6 +262,7 @@ async function setup(script: ScriptedTurn[]) {
       settings.customTools = [...settings.customTools, cfg]
     },
     setToolPermission: () => {},
+    codeIndex: new CodeIndexRegistry(),
     conversations: store,
     models: { resolve: async () => ({ option: { ref: 'p::m', providerId: 'p', providerName: 'P', id: 'm', name: 'Mock', caps: { tools: true } }, provider, contextTokens: 16384 }) },
     tools: new ToolRegistry(() => settings, new McpManager(() => settings)),
@@ -444,5 +446,46 @@ describe('keeping to the plan', () => {
     const p = buildSystemPrompt(defaultSettings('/tmp/m'), { id: 'c', title: 't', createdAt: 0, updatedAt: 0, toolsEnabled: true, params: {}, messages: [], plan: { goal: 'G', steps: [{ id: 's1', text: 'a', status: 'doing' }], updatedAt: 1 } }, new ToolRegistry(() => defaultSettings('/tmp/m'), new McpManager(() => defaultSettings('/tmp/m'))).forRun(false), '/ws', { mode: 'build' })
     expect(p).toContain('ONE step at a time')
     expect(p).toContain('skeleton')
+  })
+})
+
+describe('the project map in a chat', () => {
+  it('shows the model what the project defines, and has the index tools', async () => {
+    fs.mkdirSync(path.join(ws, 'src'))
+    fs.writeFileSync(path.join(ws, 'src/a.ts'), 'export function alpha() {}\n')
+    const { runner, conv } = await setup([{ text: ['ok'] }, { text: ['T'] }])
+    await runner.send({ conversationId: conv.id, text: 'hello' })
+    await waitEnd(conv.id)
+    const first = server!.requests[0]
+    expect(systemOf(first)).toContain('## Project map')
+    expect(systemOf(first)).toContain('src/a.ts: alpha')
+    expect(toolNames(first)).toEqual(expect.arrayContaining(['find_symbol', 'file_outline', 'find_usages']))
+  })
+
+  it('shows what the model wrote itself in the very next request', async () => {
+    settings.agent.toolPermissions = { write_file: 'auto' }
+    fs.mkdirSync(path.join(ws, 'src'))
+    fs.writeFileSync(path.join(ws, 'src/a.ts'), 'export function alpha() {}\n')
+    const { runner, conv } = await setup([
+      { toolCalls: [{ id: 'c1', name: 'write_file', args: JSON.stringify({ path: 'src/b.ts', content: 'export function beta() {}\n' }) }] },
+      { toolCalls: [{ id: 'c2', name: 'find_symbol', args: JSON.stringify({ name: 'beta' }) }] },
+      { text: ['found it'] },
+      { text: ['T'] }
+    ])
+    await runner.send({ conversationId: conv.id, text: 'add beta' })
+    await waitEnd(conv.id)
+    expect(systemOf(server!.requests[0])).not.toContain('beta')
+    expect(systemOf(server!.requests[1])).toContain('src/b.ts: beta')
+    const lookup = store.get(conv.id)!.messages.filter((m) => m.role === 'tool')[1]
+    expect(lookup.content).toContain('src/b.ts:1  function beta')
+  })
+
+  it('leaves the map out when the index tools are switched off', async () => {
+    fs.writeFileSync(path.join(ws, 'a.ts'), 'export function alpha() {}\n')
+    settings.agent.toolPermissions = { find_symbol: 'deny' }
+    const { runner, conv } = await setup([{ text: ['ok'] }, { text: ['T'] }])
+    await runner.send({ conversationId: conv.id, text: 'hello' })
+    await waitEnd(conv.id)
+    expect(systemOf(server!.requests[0])).not.toContain('## Project map')
   })
 })

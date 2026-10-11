@@ -15,7 +15,12 @@ export function SummaryModal({ compaction, open, onClose }: { compaction: Compac
         <p className="dim small" style={{ margin: 0 }}>
           The model reads this instead of the {compaction.messages} earlier messages ({compaction.toolCalls} tool calls). Your chat still shows all of them, and nothing was deleted.
         </p>
-        {compaction.source === 'ledger' && <Notice tone="warn">The model could not write a description this time, so only the list of what was asked and which tools were used was kept.</Notice>}
+        {compaction.source === 'ledger' && (
+          <Notice tone="warn">
+            The model could not write a description this time, so only the list of what was asked and which tools were used was kept.
+            {compaction.narrativeProblem ? ` Why: ${compaction.narrativeProblem}` : ''}
+          </Notice>
+        )}
         <pre className="summary-text selectable">{compactionText(compaction)}</pre>
       </div>
     </Modal>

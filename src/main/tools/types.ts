@@ -1,3 +1,4 @@
+import type { CodeIndex } from '../codeindex/index'
 import type {
   ApprovalKind,
   Conversation,
@@ -35,6 +36,8 @@ export interface ToolServices {
   addCustomTool(cfg: CustomToolConfig): void
   /** Names of every tool in use, so a new one does not clash with them. */
   toolNames(): string[]
+  /** The index of the project's code, for the workspace folder. */
+  codeIndex(workspace: string): CodeIndex
 }
 
 export interface ToolContext {

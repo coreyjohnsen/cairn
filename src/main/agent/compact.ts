@@ -103,6 +103,12 @@ export function describeCall(name: string, rawArgs: string, result?: ChatMessage
       return entry('find', `search "${clip(text(a.pattern), 60)}"${a.path ? ` in ${text(a.path)}` : ''}`)
     case 'find_files':
       return entry('find', `files ${clip(text(a.glob), 60)}${a.path ? ` in ${text(a.path)}` : ''}`)
+    case 'find_symbol':
+      return entry('find', `symbol ${clip(text(a.name), 60)}`)
+    case 'file_outline':
+      return entry('find', `outline ${text(a.path)}`)
+    case 'find_usages':
+      return entry('find', `usages of ${clip(text(a.name), 60)}`)
     case 'run_command': {
       const code = /^Exit code:\s*(-?\d+)/m.exec(result?.content ?? '')?.[1]
       return entry('cmd', text(a.command).split('\n')[0], code !== undefined ? `exit ${code}` : undefined)
@@ -153,6 +159,18 @@ export function asksFrom(prior: string[], messages: ChatMessage[]): string[] {
 }
 
 /* ───────────── asking the model to summarize ───────────── */
+
+/**
+ * Room added to the reply of a summary for a model that may think first. Its reasoning counts against the reply limit, and with
+ * only room for the summary itself a thinking model used it all up thinking and wrote nothing.
+ */
+export const THINK_ROOM_TOKENS = 3000
+
+/** How many tokens a summary request may answer with. */
+export function summaryReplyTokens(words: number, thinking: 'on' | 'off' | undefined, windowTokens: number): number {
+  const room = thinking === 'off' ? 0 : Math.min(THINK_ROOM_TOKENS, Math.floor(windowTokens * 0.3))
+  return Math.ceil(words * 2.2) + room
+}
 
 export const SUMMARY_SYSTEM =
   'You compress the middle of a long working session between a user and an AI assistant that reads and edits files and runs commands. The assistant will carry on from your summary alone, so anything you leave out is lost. Be exact and compact, never invent anything, and write plain text only.'
@@ -234,14 +252,17 @@ export type Complete = (system: string, user: string, maxTokens: number) => Prom
  * Have the model write the narrative, folding the new messages into the earlier one. Long stretches go in pieces that
  * each fit the model's memory, one after the other. Returns null when nothing usable came back.
  */
-export async function writeNarrative(complete: Complete, args: { prior: string; blocks: string[]; capacityTokens: number; words: number }): Promise<string | null> {
+export async function writeNarrative(complete: Complete, args: { prior: string; blocks: string[]; capacityTokens: number; words: number; replyTokens?: number; onProblem?: (why: string) => void }): Promise<string | null> {
   const maxChars = args.words * 8
   const chunks = packBlocks(args.blocks, args.capacityTokens)
   let narrative = args.prior
   let changed = false
   for (const chunk of chunks) {
-    const out = cleanNarrative(await complete(SUMMARY_SYSTEM, summaryRequest(narrative, chunk, args.words), Math.ceil(args.words * 2.2)), maxChars)
-    if (!out) break
+    const out = cleanNarrative(await complete(SUMMARY_SYSTEM, summaryRequest(narrative, chunk, args.words), args.replyTokens ?? Math.ceil(args.words * 2.2)), maxChars)
+    if (!out) {
+      args.onProblem?.('The reply was empty or too short to be a summary.')
+      break
+    }
     narrative = out
     changed = true
   }

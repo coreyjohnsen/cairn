@@ -28,9 +28,10 @@ import { ToolError } from '../tools/types'
 import type { ToolRegistry } from '../tools/registry'
 import { parseToolArgs, truncateMiddle } from '../util/json'
 import { contextOutputLimit, maxAgentSteps, toolOutputLimit } from '../util/limits'
+import { CodeIndexRegistry } from '../codeindex/index'
 import type { ApprovalManager } from './approvals'
-import { cleanTitle, completeText } from './complete'
-import { MIN_COMPACT_BUDGET, applyCompaction, asksFrom, chooseCut, isContextOverflow, keptFrom, ledgerFrom, mergeLedger, transcriptBlocks, validCompaction, writeNarrative } from './compact'
+import { cleanTitle, completeText, completeTextDetailed } from './complete'
+import { MIN_COMPACT_BUDGET, applyCompaction, summaryReplyTokens, asksFrom, chooseCut, isContextOverflow, keptFrom, ledgerFrom, mergeLedger, transcriptBlocks, validCompaction, writeNarrative } from './compact'
 import { estimateTokens, fitHistory, historyFor, totalTokens } from './context'
 import { detectImageRequest, isExplicitImageCommand } from './intent'
 import { allowsCreateTool, toolsForMode } from './modes'
@@ -66,6 +67,8 @@ export interface RunnerDeps {
   /** Save a tool the assistant made (with /tool) among the user's custom tools. */
   addCustomTool(cfg: CustomToolConfig): void
   conversations: ConversationStore
+  /** The index of each workspace's code (what is defined where). */
+  codeIndex: CodeIndexRegistry
   models: ModelResolver
   tools: ToolRegistry
   approvals: ApprovalManager
@@ -86,9 +89,14 @@ interface ActiveRun {
   mode?: CommandId
   /** The tools changed during the run (a new one was made), so the model is offered the new list. */
   refreshTools?: boolean
+  /** Files may have changed, so the project map is made again before the next request. */
+  mapStale?: boolean
 }
 
 class RunError extends Error {}
+
+/** Tools that cannot change files, so the project map stays as it was after them. */
+const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'find_files', 'fetch_url', 'web_search', 'find_symbol', 'file_outline', 'find_usages', 'update_plan', 'generate_image'])
 
 /** Tools whose answer carries a reminder of the plan step. */
 const PLAN_REMINDER_TOOLS = new Set(['write_file', 'edit_file', 'move_path', 'delete_path'])
@@ -409,6 +417,10 @@ export class ChatRunner {
         toolDefs = toolImpls.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))
         toolMap = new Map(toolImpls.map((t) => [t.name, t]))
       }
+      if (run.mapStale) {
+        run.mapStale = false
+        await prep.refreshMap()
+      }
       const system = prep.buildSystem(toolImpls)
       let history = historyNow()
       // Past the threshold: fold the older messages into a summary instead of letting them be dropped.
@@ -604,7 +616,21 @@ export class ChatRunner {
     const toolDefs: ToolDef[] = toolImpls.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))
     const workspace = (conv.workspace || settings.agent.workspace || '').trim() || null
     const notes = toolImpls.length ? await readNotes(workspace) : null
-    const buildSystem = (impls: ToolImpl[]) => buildSystemPrompt(settings, conv, impls, workspace, { notes, mode })
+    // A map of the project's code for the prompt: sized to the model's memory, and left out when the index tools are off.
+    let projectMap = ''
+    const mapChars = Math.max(1000, Math.min(4500, Math.floor((resolved.contextTokens ?? 8192) * 0.05 * 3.6)))
+    const refreshMap = async () => {
+      if (!workspace || !toolImpls.some((t) => t.name === 'find_symbol')) return
+      try {
+        const idx = this.d.codeIndex.get(workspace)
+        await idx.refresh()
+        projectMap = idx.repoMap(mapChars)
+      } catch {
+        projectMap = ''
+      }
+    }
+    await refreshMap()
+    const buildSystem = (impls: ToolImpl[]) => buildSystemPrompt(settings, conv, impls, workspace, { notes, mode, projectMap })
     const system = buildSystem(toolImpls)
     const params = {
       temperature: conv.params.temperature ?? settings.chat.temperature,
@@ -620,7 +646,7 @@ export class ChatRunner {
       budget = resolved.contextTokens - reserve
       if (budget < 1000) budget = Math.floor(resolved.contextTokens * 0.6)
     }
-    return { toolImpls, toolDefs, system, buildSystem, params, thinking, budget, workspace }
+    return { toolImpls, toolDefs, system, buildSystem, refreshMap, params, thinking, budget, workspace }
   }
 
   /**
@@ -647,16 +673,32 @@ export class ChatRunner {
     this.d.emit({ type: 'status', runId: run.runId, conversationId: conv.id, status: 'Summarizing the earlier conversation to free up memory…' })
     const words = Math.max(120, Math.min(380, Math.floor((o.budget * 0.1) / 1.4)))
     const window = resolved.contextTokens ?? Math.max(o.budget + 4000, 8192)
-    const capacity = window - Math.ceil(words * 2.2) - 450 - estimateTokens(prior?.narrative ?? '') - 600
+    // A model that thinks first spends part of its reply on that, so it gets room for it on top of the summary.
+    const replyTokens = summaryReplyTokens(words, o.thinking, window)
+    const capacity = window - replyTokens - 450 - estimateTokens(prior?.narrative ?? '') - 600
     let narrative: string | null = null
+    let problem: string | undefined
+    const ask = (system: string, user: string, maxTokens: number) =>
+      completeTextDetailed(resolved.provider, resolved.option.id, system, user, { maxTokens, temperature: 0.2, signal: o.signal, timeoutMs: 180_000, thinking: o.thinking })
     try {
       narrative = await writeNarrative(
-        (system, user, maxTokens) => completeText(resolved.provider, resolved.option.id, system, user, { maxTokens, temperature: 0.2, signal: o.signal, timeoutMs: 180_000, thinking: o.thinking }),
-        { prior: prior?.narrative ?? '', blocks: transcriptBlocks(range), capacityTokens: capacity, words }
+        async (system, user, maxTokens) => {
+          let r = await ask(system, user, maxTokens)
+          if (!r.text && r.reasoning) {
+            // It thought for the whole reply. Ask once more with the per-message switch that turns thinking off (it needs no restart of the server).
+            r = await ask(system, `${user}\n\n/no_think`, maxTokens)
+            if (!r.text) problem = 'The model used its whole reply thinking and wrote no summary. Set Thinking to Off for this chat, or use a model that does not think.'
+          } else if (!r.text) {
+            problem = r.finishReason === 'length' ? 'The reply was cut off by the token limit before any text.' : 'The model sent an empty reply.'
+          }
+          return r.text
+        },
+        { prior: prior?.narrative ?? '', blocks: transcriptBlocks(range), capacityTokens: capacity, words, replyTokens, onProblem: (why) => (problem ??= why) }
       )
     } catch (e) {
       if (o.signal.aborted || isAbortError(e)) throw e
       narrative = null
+      problem = `The model server answered with an error: ${errMsg(e).slice(0, 220)}`
     } finally {
       this.d.emit({ type: 'status', runId: run.runId, conversationId: conv.id, status: '' })
     }
@@ -672,6 +714,7 @@ export class ChatRunner {
       tokensAfter: 0,
       createdAt: Date.now(),
       source: narrative ? 'model' : 'ledger',
+      narrativeProblem: narrative ? undefined : problem,
       rounds: (prior?.rounds ?? 0) + 1
     }
     next.tokensAfter = totalTokens(applyCompaction(conv.messages, next))
@@ -696,6 +739,7 @@ export class ChatRunner {
         run.refreshTools = true
       },
       toolNames: () => this.d.tools.entries(this.d.images.available()).map((e) => e.impl.name),
+      codeIndex: (workspace) => this.d.codeIndex.get(workspace),
       generateImage: (args, ctx) =>
         this.d.images.generate(
           {
@@ -832,6 +876,7 @@ export class ChatRunner {
     }
 
     // 2. Run it.
+    if (!READ_ONLY_TOOLS.has(tool.name)) run.mapStale = true
     try {
       finish(await tool.execute(args, ctx))
     } catch (e) {

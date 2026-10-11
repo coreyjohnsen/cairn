@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ApprovalManager } from '../src/main/agent/approvals'
+import { CodeIndexRegistry } from '../src/main/codeindex/index'
 import { ChatRunner, type RunnerDeps } from '../src/main/agent/runner'
 import { ConversationStore } from '../src/main/conversations'
 import { OpenAIProvider } from '../src/main/providers/openai'
@@ -46,6 +47,7 @@ async function setup(script: ScriptedTurn[], opts: { tools?: boolean; image?: bo
   const deps: RunnerDeps = {
     getSettings: () => settings,
     addCustomTool() {},
+    codeIndex: new CodeIndexRegistry(),
     setToolPermission: (name, perm) => {
       settings.agent.toolPermissions = { ...settings.agent.toolPermissions, [name]: perm }
     },
@@ -393,6 +395,46 @@ describe('long tasks and the model\'s memory', () => {
     const again = new ConversationStore(path.join(dir, 'conv'))
     await again.init()
     expect(again.get(conv.id)!.compaction?.upToMessageId).toBe(c.compaction!.upToMessageId)
+  })
+
+  // A model that thinks first can spend the whole reply on that: the summary came back empty and was dropped without a word.
+  it('asks again without thinking when the whole reply was spent thinking, and gives the summary room to think', async () => {
+    const { runner, conv } = await setup(
+      [readCall('one'), readCall('two'), readCall('three'), { reasoning: ['Let me think about how to summarize this…'] }, { text: [SUMMARY] }, { text: ['All done.'] }],
+      { contextTokens: 8192 }
+    )
+    await runner.send({ conversationId: conv.id, text: 'Read the four files for me.' })
+    expect((await waitEnd(conv.id)).outcome).toBe('done')
+    expect(server!.requests[3].max_tokens).toBeGreaterThan(2000)
+    expect(server!.requests[3].messages[1].content).not.toContain('/no_think')
+    expect(server!.requests[4].messages[1].content.trimEnd().endsWith('/no_think')).toBe(true)
+    const c = store.get(conv.id)!
+    expect(c.compaction).toMatchObject({ source: 'model' })
+    expect(c.compaction!.narrativeProblem).toBeUndefined()
+    expect(c.messages.at(-1)!.content).toBe('All done.')
+  })
+
+  it('says why when the model only thought and never wrote the summary', async () => {
+    const { runner, conv } = await setup(
+      [readCall('one'), readCall('two'), readCall('three'), { reasoning: ['hmm…'] }, { reasoning: ['still thinking…'] }, { text: ['All done.'] }],
+      { contextTokens: 8192 }
+    )
+    await runner.send({ conversationId: conv.id, text: 'Read the files.' })
+    expect((await waitEnd(conv.id)).outcome).toBe('done')
+    const c = store.get(conv.id)!
+    expect(c.compaction).toMatchObject({ source: 'ledger', narrative: '' })
+    expect(c.compaction!.narrativeProblem).toMatch(/thinking/)
+    expect(c.messages.at(-1)!.content).toBe('All done.')
+  })
+
+  it('says why when the server answers the summary request with an error', async () => {
+    const { runner, conv } = await setup(
+      [readCall('one'), readCall('two'), readCall('three'), { error: { status: 500, body: { error: { message: 'out of memory' } } } }, { text: ['All done.'] }],
+      { contextTokens: 8192 }
+    )
+    await runner.send({ conversationId: conv.id, text: 'Read the files.' })
+    await waitEnd(conv.id)
+    expect(store.get(conv.id)!.compaction!.narrativeProblem).toMatch(/error.*out of memory/)
   })
 
   it('keeps the list of tool calls when the model cannot write the summary, and the task goes on', async () => {
