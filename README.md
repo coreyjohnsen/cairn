@@ -131,6 +131,22 @@ With the shape on Auto, a whole-picture edit takes the starting picture's shape 
 
 **Prompt aliases.** The Aliases button above the prompt opens a list where a short word or phrase stands for a longer text, for example `moody` for "dramatic lighting, volumetric fog, muted colours, film grain". Type the alias in a prompt and it is replaced when the picture is made; the create panel shows "Sent as" under the prompt whenever something was replaced. Aliases match whole words or phrases and ignore capitals (`cabin` changes "a Cabin at dawn", not "cabins"), the longest name wins where two overlap, and an expansion is not searched for more aliases, so they cannot loop. They apply to the prompt and the "Avoid" text for every picture, including `/imagine` and tool calls, and the picture's record keeps the expanded text.
 
+## Plans, project notes and commands
+
+With tools on, the assistant works in an organised way instead of jumping straight into code.
+
+- **Plan.** For a change that touches more than a file or two, the assistant writes a plan first with the `update_plan` tool: a goal, steps in order, and a design (which file is responsible for what, how the parts interact, how it is tested). The plan sits above the message box with its progress, and is shown to the model on every request, so it survives long chats being summarized. **Build it** carries it out; the cross clears it.
+- **Project notes.** A `CAIRN.md` in the working folder (or an existing `AGENTS.md` / `CLAUDE.md`) is read at the start of every chat there: what the project is, how to build and test it, where things live, conventions. The assistant keeps it up to date with `update_project_notes`, which asks first and shows the change.
+- **Commands.** Start a message with one; typing `/` shows the list.
+  - `/plan <task>`: think the whole job through first. Only reading and planning tools are available, so nothing is written until you say `/build`.
+  - `/build`: carry out the current plan step by step, keeping it up to date.
+  - `/tool <what it should do>`: the assistant makes itself a new tool. `create_tool` is offered only for this command, never otherwise, and you see the whole definition (code included) and approve it. The new tool is saved under Tools and asks before each run.
+  - `/init`: look through the project and write `CAIRN.md`.
+  - `/review`: check recent changes for duplicated code, two files doing the same job, leftover references and missing tests.
+  - `/imagine <picture>`: make a picture straight away.
+
+Commands work from a paired phone too, when it has been given tool access.
+
 ## Window and layout
 
 Side panels can be resized: drag the thin line on the edge of the chat list, the Image Hub's create panel, its History list or the full-screen viewer's details (double-click the line to put it back, or focus it and use the arrow keys). Ctrl+B folds or shows the side panel of the current screen (the chat list or the create panel), and each has a button to do the same. Widths and which panels are folded are remembered on this computer. The chat column, the pages under Models, Tools and Settings, and the Image Hub's big picture all grow with the window, and the chat column grows further when the chat list is folded. On Windows, the minimise, maximise and close buttons are drawn over the top-right corner of the window; the mask editor's toolbar, dialogs and the welcome screen keep clear of them.

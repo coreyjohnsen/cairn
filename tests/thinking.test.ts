@@ -141,6 +141,7 @@ describe('ChatRunner thinking', () => {
     const mcp = new McpManager(() => settings)
     const deps: RunnerDeps = {
       getSettings: () => settings,
+    addCustomTool() {},
       setToolPermission: () => {},
       conversations: store,
       models: { resolve: async () => ({ option: { ref: 'p::m', providerId: 'p', providerName: 'P', id: 'm', name: 'M', caps: { tools: true } }, provider, contextTokens: 8192 }) },

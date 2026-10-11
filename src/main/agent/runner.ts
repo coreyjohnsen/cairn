@@ -7,6 +7,7 @@ import type {
   Compaction,
   ContextUsage,
   Conversation,
+  CustomToolConfig,
   ImageGenRequest,
   ImageRef,
   ImageStage,
@@ -16,6 +17,7 @@ import type {
   ToolCall,
   ToolPermission
 } from '@shared/types'
+import { COMMANDS, type CommandId, DEFAULT_ARG, parseCommand } from '@shared/commands'
 import { newId } from '@shared/defaults'
 import { DEFAULT_TITLE, type ConversationStore } from '../conversations'
 import { emit } from '../events'
@@ -30,6 +32,8 @@ import { cleanTitle, completeText } from './complete'
 import { MIN_COMPACT_BUDGET, applyCompaction, asksFrom, chooseCut, isContextOverflow, keptFrom, ledgerFrom, mergeLedger, transcriptBlocks, validCompaction, writeNarrative } from './compact'
 import { estimateTokens, fitHistory, historyFor, totalTokens } from './context'
 import { detectImageRequest, isExplicitImageCommand } from './intent'
+import { allowsCreateTool, toolsForMode } from './modes'
+import { readNotes } from './notes'
 import { buildSystemPrompt } from './prompt'
 
 /** How much of a streaming tool call's arguments goes to the window to say what it is about (a file path or a command comes first). */
@@ -58,6 +62,8 @@ export interface AttachmentApi {
 export interface RunnerDeps {
   getSettings(): Settings
   setToolPermission(name: string, permission: ToolPermission): void
+  /** Save a tool the assistant made (with /tool) among the user's custom tools. */
+  addCustomTool(cfg: CustomToolConfig): void
   conversations: ConversationStore
   models: ModelResolver
   tools: ToolRegistry
@@ -75,6 +81,10 @@ interface ActiveRun {
   budget?: number
   /** This run may not use tools, whatever the chat says (a paired phone that has not been given tool access). */
   noTools?: boolean
+  /** The slash command the message started with; it shapes this run only. */
+  mode?: CommandId
+  /** The tools changed during the run (a new one was made), so the model is offered the new list. */
+  refreshTools?: boolean
 }
 
 class RunError extends Error {}
@@ -127,6 +137,15 @@ export class ChatRunner {
     if (this.runs.has(conv.id)) throw new Error('This chat is already generating a response.')
     const text = req.text ?? ''
     if (!text.trim() && !(req.attachments?.length ?? 0)) throw new Error('Nothing to send.')
+    // A message that starts with /plan, /build, /tool, /init or /review: the text after it is the request.
+    const cmd = req.mode === 'image' ? null : parseCommand(text)
+    if (cmd) {
+      const def = COMMANDS.find((c) => c.id === cmd.id)!
+      if (def.arg === 'required' && !cmd.text) throw new Error(`Say what to work on after ${def.name}, for example: ${def.name} ${def.hint}`)
+      if (req.noTools) throw new Error(`${def.name} needs tools, and this device is not allowed to use them.`)
+      if (!conv.toolsEnabled) throw new Error(`Turn tools on (the wrench under the message box) to use ${def.name}.`)
+    }
+    const content = cmd ? cmd.text || DEFAULT_ARG[cmd.id] || '' : text
 
     const attachments: Attachment[] = []
     for (const a of req.attachments ?? []) attachments.push(await this.d.attachments.save(a))
@@ -135,18 +154,19 @@ export class ChatRunner {
       id: newId('m_'),
       role: 'user',
       createdAt: Date.now(),
-      content: text,
+      content,
       attachments: attachments.length ? attachments : undefined,
+      command: cmd?.id,
       status: 'done'
     }
     this.d.conversations.upsertMessage(conv.id, userMsg)
     if (conv.title === DEFAULT_TITLE && !conv.titleSet) {
-      const titleSource = isExplicitImageCommand(text) ? (detectImageRequest(text) ?? text) : text
+      const titleSource = isExplicitImageCommand(text) ? (detectImageRequest(text) ?? text) : content
       const first = (titleSource.trim().split('\n')[0] || attachments[0]?.name || DEFAULT_TITLE).slice(0, 48)
       this.d.conversations.setAutoTitle(conv.id, first)
     }
 
-    const run = this.begin(conv, req.noTools)
+    const run = this.begin(conv, req.noTools, cmd?.id)
     this.d.emit({ type: 'message', runId: run.runId, conversationId: conv.id, message: userMsg })
     void this.execute(run, async () => {
       const explicit = req.mode === 'image' || isExplicitImageCommand(text)
@@ -155,7 +175,7 @@ export class ChatRunner {
         await this.runDirectImage(run, prompt)
         return
       }
-      await this.runAgent(run, text)
+      await this.runAgent(run, content)
     })
     return { runId: run.runId }
   }
@@ -174,7 +194,7 @@ export class ChatRunner {
     if (lastUser < 0) throw new Error('There is no message to regenerate from.')
     conv.messages.splice(lastUser + 1)
     this.d.conversations.markDirty(conv.id)
-    const run = this.begin(conv, opts?.noTools)
+    const run = this.begin(conv, opts?.noTools, conv.messages[lastUser].command as CommandId | undefined)
     void this.execute(run, () => this.runAgent(run, conv.messages[lastUser].content))
     return { runId: run.runId }
   }
@@ -187,7 +207,7 @@ export class ChatRunner {
     const settings = this.d.getSettings()
     const resolved = await this.d.models.resolve(conv.modelRef || settings.defaultModel)
     if (!resolved) throw new Error('No model selected. Pick a model under the message box first.')
-    const prep = this.prepare(conv, resolved)
+    const prep = await this.prepare(conv, resolved)
     const budget = prep.budget || Math.max(4000, Math.floor((resolved.contextTokens ?? 16000) * 0.7))
     const from = keptFrom(conv.messages, conv.compaction)
     const cut = chooseCut(conv.messages, from, Math.max(600, Math.floor(budget * 0.25)))
@@ -211,8 +231,8 @@ export class ChatRunner {
 
   /* ───────────────────────────── plumbing ───────────────────────────── */
 
-  private begin(conv: Conversation, noTools?: boolean): ActiveRun {
-    const run: ActiveRun = { runId: newId('run_'), conv, controller: new AbortController(), noTools: noTools || undefined }
+  private begin(conv: Conversation, noTools?: boolean, mode?: CommandId): ActiveRun {
+    const run: ActiveRun = { runId: newId('run_'), conv, controller: new AbortController(), noTools: noTools || undefined, mode }
     this.runs.set(conv.id, run)
     this.d.emit({ type: 'run-start', runId: run.runId, conversationId: conv.id })
     return run
@@ -343,8 +363,11 @@ export class ChatRunner {
       }
     }
 
-    const { toolImpls, toolDefs, system, params, thinking, budget, workspace } = this.prepare(conv, resolved, run.noTools)
-    const toolMap = new Map(toolImpls.map((t) => [t.name, t]))
+    const prep = await this.prepare(conv, resolved, run.noTools, run.mode)
+    const { system: system0, params, thinking, budget, workspace } = prep
+    let toolImpls = prep.toolImpls
+    let toolDefs = prep.toolDefs
+    let toolMap = new Map(toolImpls.map((t) => [t.name, t]))
 
     run.budget = budget
     const maxSteps = maxAgentSteps(settings)
@@ -356,7 +379,7 @@ export class ChatRunner {
       this.d.emit({ type: 'compaction', conversationId: conv.id })
     }
     const toolsOn = toolDefs.length > 0
-    const fixedTokens = estimateTokens(system) + estimateTokens(JSON.stringify(toolDefs))
+    const fixedTokens = estimateTokens(system0) + estimateTokens(JSON.stringify(toolDefs))
     // Estimates are rough, most of all for code; the server's own count of the last request corrects them.
     let scale = this.calibration.get(conv.id) ?? 1.1
     const autoCompact = settings.chat.autoCompact !== false && budget >= MIN_COMPACT_BUDGET
@@ -366,6 +389,14 @@ export class ChatRunner {
 
     for (let step = 0; step < maxSteps; step++) {
       if (signal.aborted) return
+      // A tool made during this run is on offer from the next request. The plan can have changed too, so the prompt is rebuilt.
+      if (run.refreshTools) {
+        run.refreshTools = false
+        toolImpls = this.pickTools(conv, option, run.noTools, run.mode)
+        toolDefs = toolImpls.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))
+        toolMap = new Map(toolImpls.map((t) => [t.name, t]))
+      }
+      const system = prep.buildSystem(toolImpls)
       let history = historyNow()
       // Past the threshold: fold the older messages into a summary instead of letting them be dropped.
       if (autoCompact && totalTokens(history) * scale > budget * trigger) {
@@ -544,14 +575,23 @@ export class ChatRunner {
   }
 
   /** Everything one request to the model is built from: the tools on offer, the system prompt, sampling and the room left for the chat. */
-  private prepare(conv: Conversation, resolved: ResolvedModel, noTools?: boolean) {
+  /** The tools to offer for this message: what the chat allows, narrowed by the command it started with. */
+  private pickTools(conv: Conversation, option: ModelOption, noTools?: boolean, mode?: CommandId): ToolImpl[] {
+    const toolsWanted = conv.toolsEnabled && !noTools && option.caps.tools !== false
+    if (!toolsWanted) return []
+    return toolsForMode(mode, this.d.tools.forRun(this.d.images.available(), { allow: allowsCreateTool(mode) ? ['create_tool'] : [] }))
+  }
+
+  /** Everything one request to the model is built from: the tools on offer, the system prompt, sampling and the room left for the chat. */
+  private async prepare(conv: Conversation, resolved: ResolvedModel, noTools?: boolean, mode?: CommandId) {
     const settings = this.d.getSettings()
     const { option } = resolved
-    const toolsWanted = conv.toolsEnabled && !noTools && option.caps.tools !== false
-    const toolImpls: ToolImpl[] = toolsWanted ? this.d.tools.forRun(this.d.images.available()) : []
+    const toolImpls: ToolImpl[] = this.pickTools(conv, option, noTools, mode)
     const toolDefs: ToolDef[] = toolImpls.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))
     const workspace = (conv.workspace || settings.agent.workspace || '').trim() || null
-    const system = buildSystemPrompt(settings, conv, toolImpls, workspace)
+    const notes = toolImpls.length ? await readNotes(workspace) : null
+    const buildSystem = (impls: ToolImpl[]) => buildSystemPrompt(settings, conv, impls, workspace, { notes, mode })
+    const system = buildSystem(toolImpls)
     const params = {
       temperature: conv.params.temperature ?? settings.chat.temperature,
       topP: conv.params.topP ?? settings.chat.topP,
@@ -566,7 +606,7 @@ export class ChatRunner {
       budget = resolved.contextTokens - reserve
       if (budget < 1000) budget = Math.floor(resolved.contextTokens * 0.6)
     }
-    return { toolImpls, toolDefs, system, params, thinking, budget, workspace }
+    return { toolImpls, toolDefs, system, buildSystem, params, thinking, budget, workspace }
   }
 
   /**
@@ -632,6 +672,16 @@ export class ChatRunner {
   private services(run: ActiveRun): ToolServices {
     return {
       imageAvailable: () => this.d.images.available(),
+      setPlan: (plan) => {
+        run.conv.plan = plan
+        this.d.conversations.markDirty(run.conv.id)
+        this.d.emit({ type: 'plan', conversationId: run.conv.id, plan })
+      },
+      addCustomTool: (cfg) => {
+        this.d.addCustomTool(cfg)
+        run.refreshTools = true
+      },
+      toolNames: () => this.d.tools.entries(this.d.images.available()).map((e) => e.impl.name),
       generateImage: (args, ctx) =>
         this.d.images.generate(
           {

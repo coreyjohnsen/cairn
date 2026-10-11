@@ -545,7 +545,9 @@ button {
 }
 
 /* Message box */
+/* The command menu opens above the message box. */
 .mbar {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 8px;

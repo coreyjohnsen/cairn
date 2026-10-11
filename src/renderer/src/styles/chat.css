@@ -1430,3 +1430,166 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* ───────── Commands and the plan ───────── */
+.composer {
+  position: relative;
+}
+.slash-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow);
+  z-index: 20;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.slash-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: 'name hint' 'desc desc';
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: baseline;
+  padding: 8px 10px;
+  border-radius: 10px;
+  text-align: left;
+}
+.slash-item.on {
+  background: var(--accent-soft);
+}
+.slash-name {
+  grid-area: name;
+  font-weight: 650;
+  color: var(--accent);
+}
+.slash-hint {
+  grid-area: hint;
+}
+.slash-desc {
+  grid-area: desc;
+}
+.cmd-badge {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.78em;
+  font-weight: 650;
+}
+.plan-card {
+  margin-bottom: 8px;
+  border-radius: 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.plan-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 4px;
+}
+.plan-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  text-align: left;
+  color: var(--fg);
+  font-weight: 600;
+}
+.plan-goal {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-count {
+  color: var(--fg-dim);
+}
+.plan-chev {
+  color: var(--fg-faint);
+  transition: transform var(--t-med);
+}
+.plan-card:not(.open) .plan-chev {
+  transform: rotate(-90deg);
+}
+.plan-body {
+  padding: 0 14px 12px;
+  max-height: 38vh;
+  overflow-y: auto;
+}
+.plan-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--bg-4);
+  margin: 2px 0 10px;
+  overflow: hidden;
+}
+.plan-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--t-med);
+}
+.plan-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.plan-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--fg-dim);
+}
+.plan-step svg {
+  flex: none;
+  margin-top: 3px;
+}
+.plan-step.doing {
+  color: var(--fg);
+  font-weight: 600;
+}
+.plan-step.doing svg {
+  color: var(--accent);
+}
+.plan-step.done {
+  color: var(--fg-faint);
+}
+.plan-step.done span {
+  text-decoration: line-through;
+}
+.plan-step.done svg {
+  color: var(--ok, var(--accent));
+}
+.plan-step.blocked svg {
+  color: var(--warn, #d9a441);
+}
+.plan-design {
+  margin-top: 10px;
+}
+.plan-design-body {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-1);
+  font-size: 0.88rem;
+}

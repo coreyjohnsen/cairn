@@ -134,7 +134,12 @@ const UserMessage = memo(function UserMessage({ m, canEdit }: { m: ChatMessage; 
     <div className="msg msg-user">
       <div className="bubble selectable">
         {m.attachments && m.attachments.length > 0 && <AttachmentChips items={m.attachments} />}
-        {m.content && <div className="bubble-text">{m.content}</div>}
+        {m.content && (
+          <div className="bubble-text">
+            {m.command && <span className="cmd-badge mono">/{m.command}</span>}
+            {m.content}
+          </div>
+        )}
       </div>
       <div className="msg-actions">
         <IconButton label="Copy" size="sm" onClick={() => copy(m.content)}>
@@ -145,7 +150,7 @@ const UserMessage = memo(function UserMessage({ m, canEdit }: { m: ChatMessage; 
             label="Edit and resend"
             size="sm"
             onClick={() => {
-              void truncateFrom(m.id).then(() => push({ text: m.content }))
+              void truncateFrom(m.id).then(() => push({ text: m.command ? `/${m.command} ${m.content}` : m.content }))
             }}
           >
             <Pencil size={14} />

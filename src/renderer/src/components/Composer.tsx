@@ -1,5 +1,6 @@
 import { AlertTriangle, ArrowUp, Brain, ChevronDown, FileText, FolderOpen, FolderX, ImageIcon, Paperclip, Square, Wrench, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { type SlashCommand, matchCommands } from '@shared/commands'
 import { LOCAL_PROVIDER_ID } from '@shared/defaults'
 import type { AttachmentInput, ThinkingMode } from '@shared/types'
 import { invoke } from '@/lib/api'
@@ -10,6 +11,7 @@ import { useChat } from '@/store/chat'
 import { useComposerBus } from '@/store/composer'
 import { useImages } from '@/store/images'
 import { ModelPicker } from './ModelPicker'
+import { SlashMenu } from './SlashMenu'
 import { IconButton, MenuItem, MenuLabel, MenuSeparator, Popover } from './ui'
 
 const drafts = new Map<string, string>()
@@ -192,6 +194,8 @@ export function Composer({ storageKey }: { storageKey: string }) {
   const [text, setText] = useState(() => drafts.get(storageKey) ?? '')
   const [pending, setPending] = useState<Pending[]>([])
   const [mode, setMode] = useState<'chat' | 'image'>('chat')
+  const [menuIndex, setMenuIndex] = useState(0)
+  const [menuOff, setMenuOff] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const pendingRef = useRef(pending)
@@ -274,7 +278,36 @@ export function Composer({ storageKey }: { storageKey: string }) {
     }
   }
 
+  // Typing "/" offers the commands. Tab or Enter fills one in; Esc puts the menu away until the text changes.
+  const matches = mode === 'chat' && !menuOff ? matchCommands(text) : []
+  const pick = (c: SlashCommand) => {
+    setText(`${c.name} `)
+    setMenuIndex(0)
+    area.current?.focus()
+  }
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (matches.length > 0 && !e.nativeEvent.isComposing) {
+      const at = Math.min(menuIndex, matches.length - 1)
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        setMenuIndex((at + (e.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setMenuOff(true)
+        return
+      }
+      const chosen = matches[at]
+      // A command that needs nothing more is sent as typed; otherwise Enter fills it in so the request can be written.
+      const complete = text.trim().toLowerCase() === chosen.name && chosen.arg !== 'required'
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !complete)) {
+        e.preventDefault()
+        pick(chosen)
+        return
+      }
+    }
     if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
     const wantsSend = settings.chat.sendOnEnter ? !e.shiftKey : e.ctrlKey || e.metaKey
     if (wantsSend) {
@@ -283,11 +316,12 @@ export function Composer({ storageKey }: { storageKey: string }) {
     }
   }
 
-  const placeholder = useMemo(() => (mode === 'image' ? 'Describe the image you want to make…' : models.length === 0 ? 'Add a model to start chatting…' : 'Message, or type /imagine to make a picture'), [mode, models.length])
+  const placeholder = useMemo(() => (mode === 'image' ? 'Describe the image you want to make…' : models.length === 0 ? 'Add a model to start chatting…' : 'Message, or type / for commands'), [mode, models.length])
 
   return (
     <div className="composer-wrap">
       <div className={cx('composer', mode === 'image' && 'image-mode')}>
+        <SlashMenu items={matches} index={Math.min(menuIndex, Math.max(0, matches.length - 1))} onPick={pick} onHover={setMenuIndex} />
         {pending.length > 0 && (
           <div className="composer-files">
             {pending.map((p) => (
@@ -318,7 +352,11 @@ export function Composer({ storageKey }: { storageKey: string }) {
           value={text}
           placeholder={placeholder}
           spellCheck
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value)
+            setMenuOff(false)
+            setMenuIndex(0)
+          }}
           onKeyDown={onKeyDown}
           onPaste={(e) => {
             const files = [...e.clipboardData.files]

@@ -4,6 +4,7 @@ import type { ApprovalRequest } from '@shared/types'
 import { ApprovalDock } from '@/components/ApprovalDock'
 import { Logo } from '@/components/Logo'
 import { MessageList } from '@/components/MessageList'
+import { PlanCard } from '@/components/PlanCard'
 import { Button } from '@/components/ui'
 import { cx } from '@/lib/format'
 import { useApp } from '@/store/app'
@@ -158,6 +159,7 @@ function ChatMenu({ onClose }: { onClose: () => void }) {
 
 /** One chat: its messages, the message box, and a menu. A full screen on phones, the right-hand pane on tablets. */
 export function ChatScreen({ wide }: { wide?: boolean }) {
+  const canTools = useSession((s) => !!s.session?.device.scopes.tools)
   const activeId = useChat((s) => s.activeId)
   const conv = useChat((s) => (s.activeId ? s.cache[s.activeId] : undefined))
   const running = useChat((s) => (s.activeId ? !!s.running[s.activeId] : false))
@@ -201,6 +203,7 @@ export function ChatScreen({ wide }: { wide?: boolean }) {
       {hasMessages && conv ? <MessageList conv={conv} running={running} status={status} runError={runError} progress={progress} /> : <EmptyChat />}
       <div className="dock">
         <ApprovalDock approvals={approvals} />
+        {conv && <PlanCard conv={conv} running={running} canClear={false} canBuild={canTools} />}
         <Composer key={activeId ?? 'new'} storageKey={activeId ?? 'new'} />
       </div>
       {menuOpen && <ChatMenu onClose={() => close('chatMenu')} />}

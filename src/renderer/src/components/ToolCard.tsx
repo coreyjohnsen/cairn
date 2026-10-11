@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, ChevronRight, FilePen, FilePlus, FileText, FolderOpen, Globe, ImageIcon, MoveRight, Puzzle, Search, SearchCode, Terminal, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Check, ChevronRight, FilePen, FilePlus, FileText, FolderOpen, Globe, ImageIcon, ListChecks, MoveRight, NotebookPen, Puzzle, Search, SearchCode, Terminal, Trash2, X } from 'lucide-react'
 import { memo, useState } from 'react'
 import type { ChatMessage, ToolCall, ToolProgress, ToolStream } from '@shared/types'
 import { cx, formatBytes, formatCount } from '@/lib/format'
@@ -17,6 +17,8 @@ export const ICONS: Record<ToolIconKey, typeof FileText> = {
   shell: Terminal,
   web: Globe,
   image: ImageIcon,
+  plan: ListChecks,
+  notes: NotebookPen,
   custom: Puzzle
 }
 

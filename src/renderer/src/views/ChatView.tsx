@@ -5,6 +5,7 @@ import { ApprovalDock } from '@/components/ApprovalDock'
 import { ChatSettingsModal } from '@/components/ChatSettingsModal'
 import { Composer } from '@/components/Composer'
 import { ContextMeter } from '@/components/ContextMeter'
+import { PlanCard } from '@/components/PlanCard'
 import { ConversationPanel } from '@/components/ConversationPanel'
 import { MessageList } from '@/components/MessageList'
 import { Ridgeline } from '@/components/Ridgeline'
@@ -258,6 +259,7 @@ export function ChatView() {
         {hasMessages && conv ? <MessageList conv={conv} running={running} status={status} runError={runError} progress={progress} /> : <EmptyChat />}
         <div className="chat-bottom">
           <ApprovalDock approvals={approvals} />
+          {conv && <PlanCard conv={conv} running={running} />}
           <Composer key={activeId ?? 'new'} storageKey={activeId ?? 'new'} />
         </div>
         {dragging && (

@@ -223,6 +223,17 @@ function seedConversations(): void {
     mk('c_demo0', 'Tidy the trail-notes repo', 14 * MIN, {
       workspace: '/home/corey/projects/alpine-notes',
       contextUsage: { used: 3_120, window: 16_384, at: now - 14 * MIN },
+      plan: {
+        goal: 'Bring the README in line with the sort script and fix accented names',
+        design: '- `README.md`: usage section only, matches `scripts/sort_names.py`\n- `scripts/sort_names.py`: owns all name comparison (one function, `sort_key`)\n- `tests/test_sort.py`: accented and plain names',
+        steps: [
+          { id: 's1', text: 'Read README.md and scripts/sort_names.py', status: 'done' },
+          { id: 's2', text: 'Fix sort_key in scripts/sort_names.py for accented names', status: 'doing' },
+          { id: 's3', text: 'Update the usage section of README.md', status: 'todo' },
+          { id: 's4', text: 'Add accented cases to tests/test_sort.py and run them', status: 'todo' }
+        ],
+        updatedAt: now - 15 * MIN
+      },
       messages: [
         { id: 'm0', role: 'user', createdAt: now - 16 * MIN, content: 'The README is out of date and the sort script has a bug with accented names. Can you fix both?' },
         demoAssistant('m1', {
@@ -605,7 +616,8 @@ const handlers: Handlers = {
   'conversations:list': () => [...conversations.values()].map(summary),
   'conversations:get': (id) => conversations.get(id) ?? null,
   'conversations:create': (init) => {
-    const c: Conversation = { id: newId('c_'), title: 'New chat', createdAt: Date.now(), updatedAt: Date.now(), toolsEnabled: true, params: {}, messages: [], ...init }
+    const { plan, ...rest } = init ?? {}
+    const c: Conversation = { id: newId('c_'), title: 'New chat', createdAt: Date.now(), updatedAt: Date.now(), toolsEnabled: true, params: {}, messages: [], ...rest, plan: plan ?? undefined }
     conversations.set(c.id, c)
     return c
   },

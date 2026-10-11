@@ -98,6 +98,7 @@ export class ConversationStore {
     if (patch.imageTarget !== undefined) c.imageTarget = patch.imageTarget
     if (patch.params !== undefined) c.params = patch.params
     if (patch.pinned !== undefined) c.pinned = patch.pinned || undefined
+    if (patch.plan !== undefined) c.plan = patch.plan ?? undefined
     this.markDirty(id)
     return c
   }
