@@ -45,6 +45,12 @@ export function summarizeTool(name: string, rawArgs: string): ToolSummary {
       return { icon: 'web', verb: 'Fetched', target: truncate(str(a.url).replace(/^https?:\/\//, ''), 70) }
     case 'web_search':
       return { icon: 'web', verb: 'Searched the web for', target: truncate(str(a.query), 70) }
+    case 'find_symbol':
+      return { icon: 'search', verb: 'Looked up', target: truncate(str(a.name), 60) }
+    case 'file_outline':
+      return { icon: 'list', verb: 'Outlined', target: baseName(str(a.path)) || str(a.path) }
+    case 'find_usages':
+      return { icon: 'search', verb: 'Found usages of', target: truncate(str(a.name), 60) }
     case 'update_plan': {
       const n = Array.isArray(a.steps) ? a.steps.length : 0
       return { icon: 'plan', verb: 'Updated the plan', target: str(a.goal) ? truncate(str(a.goal), 70) : n ? `${n} steps` : '' }
@@ -92,6 +98,9 @@ export function presentTense(verb: string): string {
     Ran: 'Running',
     Fetched: 'Fetching',
     'Searched the web for': 'Searching the web for',
+    'Looked up': 'Looking up',
+    Outlined: 'Outlining',
+    'Found usages of': 'Finding usages of',
     'Generated an image of': 'Generating an image of'
   }
   return map[verb] ?? verb

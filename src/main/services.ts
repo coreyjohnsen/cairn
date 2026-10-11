@@ -3,6 +3,7 @@ import type { Settings, ToolPermission } from '@shared/types'
 import { ApprovalManager } from './agent/approvals'
 import { ChatRunner } from './agent/runner'
 import { AttachmentStore } from './attachments'
+import { CodeIndexRegistry } from './codeindex/index'
 import { ConversationStore } from './conversations'
 import { DownloadManager } from './engines/downloads'
 import { EngineManager } from './engines/manager'
@@ -56,6 +57,7 @@ export interface Services {
   images: ImageService
   attachments: AttachmentStore
   runner: ChatRunner
+  codeIndex: CodeIndexRegistry
   /** Shares the local models with other programs. */
   api: ApiServer
   /** Pairs phones and tablets and serves them the companion web app. */
@@ -99,6 +101,7 @@ export async function createServices(opts: ServiceOptions): Promise<Services> {
   const mcp = new McpManager(get)
   const tools = new ToolRegistry(get, mcp)
   const approvals = new ApprovalManager()
+  const codeIndex = new CodeIndexRegistry()
 
   const imageStore = new ImageStore({ imagesDir: paths.images, thumbsDir: paths.thumbs, indexFile: paths.imageIndex, makeThumb: opts.makeThumb })
   await imageStore.load()
@@ -132,6 +135,7 @@ export async function createServices(opts: ServiceOptions): Promise<Services> {
       settings.update({ agent: { ...s.agent, toolPermissions: { ...s.agent.toolPermissions, [name]: permission } } })
     },
     addCustomTool: (cfg) => settings.update({ customTools: [...get().customTools, cfg] }),
+    codeIndex,
     conversations,
     models,
     tools,
@@ -202,6 +206,7 @@ export async function createServices(opts: ServiceOptions): Promise<Services> {
     images,
     attachments,
     runner,
+    codeIndex,
     api,
     remote,
     async shutdown() {

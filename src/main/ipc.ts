@@ -156,7 +156,7 @@ export function buildHandlers(s: Services, platform: PlatformApi): Handlers {
         settings: st,
         signal: AbortSignal.timeout(120_000),
         conversation,
-        services: { imageAvailable: () => false, generateImage: async () => [], setPlan() {}, addCustomTool() {}, toolNames: () => [] },
+        services: { imageAvailable: () => false, generateImage: async () => [], setPlan() {}, addCustomTool() {}, toolNames: () => [], codeIndex: (ws) => s.codeIndex.get(ws) },
         progress() {}
       }
       const started = Date.now()

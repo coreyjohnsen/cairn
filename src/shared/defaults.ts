@@ -169,7 +169,10 @@ export const BUILTIN_TOOL_DEFAULTS: Record<string, ToolPermission> = {
   generate_image: 'auto',
   update_plan: 'auto',
   update_project_notes: 'ask',
-  create_tool: 'ask'
+  create_tool: 'ask',
+  find_symbol: 'auto',
+  file_outline: 'auto',
+  find_usages: 'auto'
 }
 
 export const REMOTE_DEFAULT_PORT = 8742

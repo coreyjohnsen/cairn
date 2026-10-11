@@ -103,6 +103,12 @@ export function describeCall(name: string, rawArgs: string, result?: ChatMessage
       return entry('find', `search "${clip(text(a.pattern), 60)}"${a.path ? ` in ${text(a.path)}` : ''}`)
     case 'find_files':
       return entry('find', `files ${clip(text(a.glob), 60)}${a.path ? ` in ${text(a.path)}` : ''}`)
+    case 'find_symbol':
+      return entry('find', `symbol ${clip(text(a.name), 60)}`)
+    case 'file_outline':
+      return entry('find', `outline ${text(a.path)}`)
+    case 'find_usages':
+      return entry('find', `usages of ${clip(text(a.name), 60)}`)
     case 'run_command': {
       const code = /^Exit code:\s*(-?\d+)/m.exec(result?.content ?? '')?.[1]
       return entry('cmd', text(a.command).split('\n')[0], code !== undefined ? `exit ${code}` : undefined)

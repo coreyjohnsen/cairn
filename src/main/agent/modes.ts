@@ -4,7 +4,7 @@ import type { ConversationPlan } from '@shared/types'
 import type { ToolImpl } from '../tools/types'
 
 /** What each command lets the assistant use. Planning and reviewing never change project files; the others use the usual tools. */
-const LOOK = ['list_directory', 'read_file', 'search_files', 'find_files', 'fetch_url', 'web_search', 'update_plan', 'update_project_notes']
+const LOOK = ['list_directory', 'read_file', 'search_files', 'find_files', 'find_symbol', 'file_outline', 'find_usages', 'fetch_url', 'web_search', 'update_plan', 'update_project_notes']
 const ONLY: Partial<Record<CommandId, string[]>> = {
   plan: LOOK,
   review: [...LOOK, 'run_command'],
@@ -21,7 +21,7 @@ export const allowsCreateTool = (mode: CommandId | undefined): boolean => mode =
 
 const PLAN = [
   'PLANNING MODE (the user started this message with /plan). Do not create, edit, move or delete any project file, and run no command that changes anything. Your job is to think the whole job through before any code exists.',
-  '1. Look first. Read the project notes, list the folders, and search for existing code that already does part of this job. Name what you found.',
+  '1. Look first. Read the project notes and the project map, then use find_symbol, file_outline and find_usages to see what the project already has that does part of this job. Name what you found.',
   '2. Then write the complete plan with update_plan. Its "design" must cover:',
   '   - Files: every file involved with the ONE thing it is responsible for, marked "existing: extend" or "new". A new file only when no existing file fits. Never two files for the same job.',
   '   - How the parts interact: who calls whom, what data passes between them, the public functions and types.',
@@ -92,10 +92,10 @@ export function modeDirective(mode: CommandId | undefined, plan: ConversationPla
 
 /** The working method, always shown when the assistant has file tools. Short, because it is sent with every request. */
 export const WORKING_METHOD = [
-  '- Look before you build: read the project notes, and search the project for code that already does what you need. Extend what exists; never make a second file or function for a job that one already does.',
+  '- Look before you build: read the project notes and the project map, and use find_symbol, file_outline and find_usages to see what the project already has. Extend what exists; never make a second file or function for a job that one already does.',
   '- For a change that touches more than one or two files, first write the plan with update_plan: which file is responsible for what, how the parts interact, and how it will be tested. Make each step small (one file or one section of a file), then work through them one at a time, marking each done before starting the next.',
   '- Write large files in parts (a skeleton first, then each section with edit_file, about 150 to 250 lines per call); a single huge write_file call is cut off.',
-  '- Keep one source of truth: when you move or rename something, search for everything that referenced it and update it in the same piece of work.',
+  '- Keep one source of truth: when you move or rename something, use find_usages to find everything that referenced it and update it in the same piece of work.',
   '- After changing code, run the project\'s typecheck, lint or tests if it has them, and fix what they report before saying you are done.',
   '- When you add a module or settle a convention, record it in the project notes with update_project_notes (short and factual).'
 ].join('\n')

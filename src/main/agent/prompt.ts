@@ -21,6 +21,8 @@ export interface PromptExtras {
   notes?: Notes | null
   /** The slash command this message started with. */
   mode?: CommandId
+  /** A short map of the project's code (what each file defines). */
+  projectMap?: string
 }
 
 export function buildSystemPrompt(settings: Settings, conv: Conversation, tools: ToolImpl[], workspace: string | null, extras: PromptExtras = {}): string {
@@ -56,6 +58,9 @@ export function buildSystemPrompt(settings: Settings, conv: Conversation, tools:
     }
     if (extras.notes) {
       lines.push('', `## Project notes (${extras.notes.file})`, 'Written for this folder. Follow them, and keep them true.', extras.notes.text.trim())
+    }
+    if (extras.projectMap && names.has('find_symbol')) {
+      lines.push('', '## Project map', "What the project's files define, made from the files a moment ago. Look closer with find_symbol, file_outline and find_usages before you write anything new.", extras.projectMap)
     }
     const plan = names.has('update_plan') ? planSection(conv.plan) : ''
     if (plan) lines.push('', plan)

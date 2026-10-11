@@ -28,6 +28,7 @@ import { ToolError } from '../tools/types'
 import type { ToolRegistry } from '../tools/registry'
 import { parseToolArgs, truncateMiddle } from '../util/json'
 import { contextOutputLimit, maxAgentSteps, toolOutputLimit } from '../util/limits'
+import { CodeIndexRegistry } from '../codeindex/index'
 import type { ApprovalManager } from './approvals'
 import { cleanTitle, completeText } from './complete'
 import { MIN_COMPACT_BUDGET, applyCompaction, asksFrom, chooseCut, isContextOverflow, keptFrom, ledgerFrom, mergeLedger, transcriptBlocks, validCompaction, writeNarrative } from './compact'
@@ -66,6 +67,8 @@ export interface RunnerDeps {
   /** Save a tool the assistant made (with /tool) among the user's custom tools. */
   addCustomTool(cfg: CustomToolConfig): void
   conversations: ConversationStore
+  /** The index of each workspace's code (what is defined where). */
+  codeIndex: CodeIndexRegistry
   models: ModelResolver
   tools: ToolRegistry
   approvals: ApprovalManager
@@ -86,9 +89,14 @@ interface ActiveRun {
   mode?: CommandId
   /** The tools changed during the run (a new one was made), so the model is offered the new list. */
   refreshTools?: boolean
+  /** Files may have changed, so the project map is made again before the next request. */
+  mapStale?: boolean
 }
 
 class RunError extends Error {}
+
+/** Tools that cannot change files, so the project map stays as it was after them. */
+const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'find_files', 'fetch_url', 'web_search', 'find_symbol', 'file_outline', 'find_usages', 'update_plan', 'generate_image'])
 
 /** Tools whose answer carries a reminder of the plan step. */
 const PLAN_REMINDER_TOOLS = new Set(['write_file', 'edit_file', 'move_path', 'delete_path'])
@@ -409,6 +417,10 @@ export class ChatRunner {
         toolDefs = toolImpls.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))
         toolMap = new Map(toolImpls.map((t) => [t.name, t]))
       }
+      if (run.mapStale) {
+        run.mapStale = false
+        await prep.refreshMap()
+      }
       const system = prep.buildSystem(toolImpls)
       let history = historyNow()
       // Past the threshold: fold the older messages into a summary instead of letting them be dropped.
@@ -604,7 +616,21 @@ export class ChatRunner {
     const toolDefs: ToolDef[] = toolImpls.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))
     const workspace = (conv.workspace || settings.agent.workspace || '').trim() || null
     const notes = toolImpls.length ? await readNotes(workspace) : null
-    const buildSystem = (impls: ToolImpl[]) => buildSystemPrompt(settings, conv, impls, workspace, { notes, mode })
+    // A map of the project's code for the prompt: sized to the model's memory, and left out when the index tools are off.
+    let projectMap = ''
+    const mapChars = Math.max(1000, Math.min(4500, Math.floor((resolved.contextTokens ?? 8192) * 0.05 * 3.6)))
+    const refreshMap = async () => {
+      if (!workspace || !toolImpls.some((t) => t.name === 'find_symbol')) return
+      try {
+        const idx = this.d.codeIndex.get(workspace)
+        await idx.refresh()
+        projectMap = idx.repoMap(mapChars)
+      } catch {
+        projectMap = ''
+      }
+    }
+    await refreshMap()
+    const buildSystem = (impls: ToolImpl[]) => buildSystemPrompt(settings, conv, impls, workspace, { notes, mode, projectMap })
     const system = buildSystem(toolImpls)
     const params = {
       temperature: conv.params.temperature ?? settings.chat.temperature,
@@ -620,7 +646,7 @@ export class ChatRunner {
       budget = resolved.contextTokens - reserve
       if (budget < 1000) budget = Math.floor(resolved.contextTokens * 0.6)
     }
-    return { toolImpls, toolDefs, system, buildSystem, params, thinking, budget, workspace }
+    return { toolImpls, toolDefs, system, buildSystem, refreshMap, params, thinking, budget, workspace }
   }
 
   /**
@@ -696,6 +722,7 @@ export class ChatRunner {
         run.refreshTools = true
       },
       toolNames: () => this.d.tools.entries(this.d.images.available()).map((e) => e.impl.name),
+      codeIndex: (workspace) => this.d.codeIndex.get(workspace),
       generateImage: (args, ctx) =>
         this.d.images.generate(
           {
@@ -832,6 +859,7 @@ export class ChatRunner {
     }
 
     // 2. Run it.
+    if (!READ_ONLY_TOOLS.has(tool.name)) run.mapStale = true
     try {
       finish(await tool.execute(args, ctx))
     } catch (e) {

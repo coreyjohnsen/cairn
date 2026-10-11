@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ApprovalManager } from '../src/main/agent/approvals'
+import { CodeIndexRegistry } from '../src/main/codeindex/index'
 import { ChatRunner, type RunnerDeps } from '../src/main/agent/runner'
 import { ConversationStore } from '../src/main/conversations'
 import { OpenAIProvider } from '../src/main/providers/openai'
@@ -46,6 +47,7 @@ async function setup(script: ScriptedTurn[], opts: { tools?: boolean; image?: bo
   const deps: RunnerDeps = {
     getSettings: () => settings,
     addCustomTool() {},
+    codeIndex: new CodeIndexRegistry(),
     setToolPermission: (name, perm) => {
       settings.agent.toolPermissions = { ...settings.agent.toolPermissions, [name]: perm }
     },
