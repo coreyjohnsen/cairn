@@ -55,6 +55,14 @@ export function summarizeTool(name: string, rawArgs: string): ToolSummary {
       const n = Array.isArray(a.steps) ? a.steps.length : 0
       return { icon: 'plan', verb: 'Updated the plan', target: str(a.goal) ? truncate(str(a.goal), 70) : n ? `${n} steps` : '' }
     }
+    case 'set_step_status':
+      return { icon: 'plan', verb: str(a.status) === 'done' ? 'Finished step' : 'Updated step', target: `${str(a.step)} (${str(a.status)})` }
+    case 'check_references':
+      return { icon: 'search', verb: 'Checked references', target: 'across the project' }
+    case 'run_page': {
+      const clicks = Array.isArray(a.click) ? a.click.length : 0
+      return { icon: 'web', verb: 'Opened the page', target: `${baseName(str(a.path)) || truncate(str(a.url), 50)}${clicks ? ` and clicked ${clicks}` : ''}` }
+    }
     case 'update_project_notes':
       return { icon: 'notes', verb: 'Updated the project notes', target: str(a.mode) === 'replace' ? 'rewritten' : 'added to' }
     case 'create_tool':

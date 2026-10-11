@@ -1,3 +1,4 @@
+import path from 'node:path'
 import type {
   ApprovalDecision,
   ApprovalRequest,
@@ -21,11 +22,14 @@ import { COMMANDS, type CommandId, DEFAULT_ARG, parseCommand } from '@shared/com
 import { planReminder } from '@shared/plan'
 import { newId } from '@shared/defaults'
 import { DEFAULT_TITLE, type ConversationStore } from '../conversations'
+import { checkFile, checkNotice } from './checks'
+import { FailureTracker } from './failures'
 import { emit } from '../events'
 import type { LoadedAttachment, Provider, ToolDef } from '../providers/types'
-import type { ApprovalPreview, ToolContext, ToolImpl, ToolResult, ToolServices } from '../tools/types'
+import type { ApprovalPreview, PageOptions, PageReport, ToolContext, ToolImpl, ToolResult, ToolServices } from '../tools/types'
 import { ToolError } from '../tools/types'
 import type { ToolRegistry } from '../tools/registry'
+import { resolvePath } from '../tools/sandbox'
 import { parseToolArgs, truncateMiddle } from '../util/json'
 import { contextOutputLimit, maxAgentSteps, toolOutputLimit } from '../util/limits'
 import { CodeIndexRegistry } from '../codeindex/index'
@@ -74,6 +78,8 @@ export interface RunnerDeps {
   approvals: ApprovalManager
   images: ImageApi
   attachments: AttachmentApi
+  /** Open a page in a hidden browser window (the app provides it; tests may leave it out). */
+  runPage?(url: string, opts: PageOptions): Promise<PageReport>
   emit(e: ChatEvent): void
 }
 
@@ -91,12 +97,14 @@ interface ActiveRun {
   refreshTools?: boolean
   /** Files may have changed, so the project map is made again before the next request. */
   mapStale?: boolean
+  /** Failures that keep coming back in this run. */
+  failures: FailureTracker
 }
 
 class RunError extends Error {}
 
 /** Tools that cannot change files, so the project map stays as it was after them. */
-const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'find_files', 'fetch_url', 'web_search', 'find_symbol', 'file_outline', 'find_usages', 'update_plan', 'generate_image'])
+const READ_ONLY_TOOLS = new Set(['read_file', 'list_directory', 'search_files', 'find_files', 'fetch_url', 'web_search', 'find_symbol', 'file_outline', 'find_usages', 'update_plan', 'set_step_status', 'check_references', 'run_page', 'generate_image'])
 
 /** Tools whose answer carries a reminder of the plan step. */
 const PLAN_REMINDER_TOOLS = new Set(['write_file', 'edit_file', 'move_path', 'delete_path'])
@@ -253,7 +261,7 @@ export class ChatRunner {
   /* ───────────────────────────── plumbing ───────────────────────────── */
 
   private begin(conv: Conversation, noTools?: boolean, mode?: CommandId): ActiveRun {
-    const run: ActiveRun = { runId: newId('run_'), conv, controller: new AbortController(), noTools: noTools || undefined, mode }
+    const run: ActiveRun = { runId: newId('run_'), conv, controller: new AbortController(), noTools: noTools || undefined, mode, failures: new FailureTracker() }
     this.runs.set(conv.id, run)
     this.d.emit({ type: 'run-start', runId: run.runId, conversationId: conv.id })
     return run
@@ -728,6 +736,7 @@ export class ChatRunner {
 
   private services(run: ActiveRun): ToolServices {
     return {
+      runPage: this.d.runPage ? (url, opts) => this.d.runPage!(url, opts) : undefined,
       imageAvailable: () => this.d.images.available(),
       setPlan: (plan) => {
         run.conv.plan = plan
@@ -763,6 +772,8 @@ export class ChatRunner {
     const { conv } = run
     const settings = this.d.getSettings()
     const tool = toolMap.get(tc.name)
+    /** What the call was about (a file or a command), so repeated failures of the same thing can be told apart. */
+    let subject = ''
     const finish = (r: ToolResult & { denied?: boolean }) => {
       const userLimit = toolOutputLimit(settings)
       const memoryLimit = contextOutputLimit(run.budget)
@@ -770,6 +781,13 @@ export class ChatRunner {
       let content = truncateMiddle(r.content ?? '', limit)
       if (memoryLimit < userLimit && content.length < (r.content ?? '').length) {
         content += `\n[Cut to fit the model's memory (${run.budget} tokens). Ask for smaller pieces, e.g. a line range, or raise Context size in Models → Local models.]`
+      }
+      // The same failure again and again means the model is guessing; tell it to look instead.
+      if (tool && !r.denied) {
+        if (r.isError) {
+          const hint = run.failures.failed(FailureTracker.key(tc.name, subject, r.content ?? ''))
+          if (hint) content += `\n\n${hint}`
+        } else run.failures.succeeded(`${tc.name}|${subject}|`)
       }
       // After a change to files, remind the model of the step it is on, so it keeps the plan current and does one step at a time.
       if (!r.isError && !r.denied && PLAN_REMINDER_TOOLS.has(tc.name)) {
@@ -811,6 +829,7 @@ export class ChatRunner {
       return
     }
     const args = parsed.value
+    subject = String(args.path ?? args.command ?? args.url ?? args.name ?? '').slice(0, 160)
 
     const ctx: ToolContext = {
       conversationId: conv.id,
@@ -878,7 +897,7 @@ export class ChatRunner {
     // 2. Run it.
     if (!READ_ONLY_TOOLS.has(tool.name)) run.mapStale = true
     try {
-      finish(await tool.execute(args, ctx))
+      finish(await this.checkedWrite(run, tc.name, args, workspace, await tool.execute(args, ctx)))
     } catch (e) {
       if (run.controller.signal.aborted) {
         finish({ content: 'Cancelled by the user.', isError: true })
@@ -886,6 +905,30 @@ export class ChatRunner {
       }
       const message = e instanceof ToolError ? e.message : `Tool failed: ${e instanceof Error ? e.message : String(e)}`
       finish({ content: message, isError: true })
+    }
+  }
+
+  /**
+   * After a file was written or edited, look at it: does it parse, and do the files a page names exist? A problem is
+   * added to the tool's answer on the same turn, so the model fixes it at once instead of building on a broken file.
+   */
+  private async checkedWrite(run: ActiveRun, toolName: string, args: Record<string, unknown>, workspace: string | null, result: ToolResult): Promise<ToolResult> {
+    if (result.isError || (toolName !== 'write_file' && toolName !== 'edit_file') || typeof args.path !== 'string') return result
+    try {
+      const { abs } = resolvePath(workspace, args.path, true)
+      const rel = workspace ? path.relative(workspace, abs).split(path.sep).join('/') || args.path : args.path
+      const check = await checkFile(abs, workspace, run.controller.signal)
+      const notice = checkNotice(rel, check)
+      const key = `check|${rel}|`
+      if (!notice) {
+        run.failures.succeeded(key)
+        return result
+      }
+      // A file that fails its check twice in a row is a repeat even when the message differs: it is being guessed at.
+      const hint = run.failures.failed(FailureTracker.key('check', rel, ''))
+      return { ...result, content: `${result.content}\n\n${notice}${hint ? `\n${hint}` : ''}` }
+    } catch {
+      return result
     }
   }
 

@@ -27,7 +27,36 @@ export interface ImageToolArgs {
   count?: number
 }
 
+/** What opening a page in a hidden browser window found. */
+export interface PageReport {
+  url: string
+  title: string
+  /** Console errors and uncaught exceptions. */
+  errors: string[]
+  warnings: string[]
+  /** Files and requests that did not load. */
+  failedRequests: string[]
+  /** The start of the text the page shows. */
+  text: string
+  /** For each selector asked to be clicked, whether it was found. */
+  clicks: { selector: string; found: boolean }[]
+  /** For each selector expected on the page, whether it is there. */
+  expected: { selector: string; found: boolean }[]
+  crashed?: boolean
+  loadError?: string
+}
+
+export interface PageOptions {
+  /** Milliseconds to wait after the page has loaded before reading it (scripts and fetches settle). */
+  waitMs: number
+  click: string[]
+  expect: string[]
+  signal: AbortSignal
+}
+
 export interface ToolServices {
+  /** Open a page in a hidden browser window and report what went wrong in it. Absent where there is no browser to use. */
+  runPage?(url: string, opts: PageOptions): Promise<PageReport>
   imageAvailable(): boolean
   generateImage(args: ImageToolArgs, ctx: ToolContext): Promise<ImageRef[]>
   /** Replace the chat's plan (and tell the window). */

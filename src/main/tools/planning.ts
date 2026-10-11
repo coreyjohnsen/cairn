@@ -1,12 +1,14 @@
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { BUILTIN_TOOL_DEFAULTS, newId } from '@shared/defaults'
-import { MAX_PLAN_STEPS, applyPlanUpdate, planText } from '@shared/plan'
+import { MAX_PLAN_STEPS, applyPlanUpdate, newlyDone, planText, withStepStatus } from '@shared/plan'
+import type { ConversationPlan } from '@shared/types'
 import type { CustomToolConfig } from '@shared/types'
 import { makeDiff, previewNewFile } from '../util/diff'
+import { finishReport, verifyDoneSteps } from '../agent/finish'
 import { notesTarget } from '../agent/notes'
 import { TOOL_NAME_RE, customToolImpl } from './custom'
-import { type ApprovalPreview, ToolError, type ToolImpl, num, str } from './types'
+import { type ApprovalPreview, type ToolContext, ToolError, type ToolImpl, num, str } from './types'
 
 const D = BUILTIN_TOOL_DEFAULTS
 const NOTES_MAX_WRITE = 20000
@@ -18,12 +20,12 @@ export function planningTools(): ToolImpl[] {
   tools.push({
     name: 'update_plan',
     description:
-      'Write down or update the plan for the current job. Use it BEFORE writing code for anything that touches more than one or two files, and keep it current: mark a step "doing" when you start it and "done" when it is finished. Send the complete list of steps every time. Each step must be SMALL: one file, or one section of a larger file, finished in one or two tool calls, and it names that file or area. Never put a whole app in one step. The "design" says which file is responsible for what, how the parts interact, and how it will be tested. The plan is shown to you on every request, even after the conversation is summarized.',
+      'Write down or change the plan for the current job. Use it BEFORE writing code for anything that touches more than one or two files. Send the complete list of steps. Each step must be SMALL: one file, or one section of a larger file, finished in one or two tool calls, and it names that file or area. Never put a whole app in one step. Give each step a "verify": a command that proves it works (for example `node --check js/api.js`, `npm test`, `python -m pytest tests/test_x.py`). When you mark a step done its command is run and the step stays open if it fails. The "design" says which file is responsible for what, how the parts interact, and how it will be tested; send it only when it changes. To change the status of a step later, use set_step_status instead of sending the whole plan again. The plan is shown to you on every request, even after the conversation is summarized.',
     parameters: {
       type: 'object',
       properties: {
         goal: { type: 'string', description: 'One or two sentences: what the job is and what done looks like.' },
-        design: { type: 'string', description: 'Markdown: files and what each is responsible for, how they interact, what is reused from what already exists, and the test cases.' },
+        design: { type: 'string', description: 'Markdown: files and what each is responsible for, how they interact, what is reused from what already exists, and the test cases. Leave it out when it has not changed.' },
         steps: {
           type: 'array',
           description: `The full list of steps, in order (at most ${MAX_PLAN_STEPS}).`,
@@ -31,7 +33,8 @@ export function planningTools(): ToolImpl[] {
             type: 'object',
             properties: {
               text: { type: 'string', description: 'The step, naming the file or area.' },
-              status: { type: 'string', enum: ['todo', 'doing', 'done', 'blocked'] }
+              status: { type: 'string', enum: ['todo', 'doing', 'done', 'blocked'] },
+              verify: { type: 'string', description: 'A shell command that exits 0 when the step works. Run when the step is marked done.' }
             },
             required: ['text']
           }
@@ -41,11 +44,31 @@ export function planningTools(): ToolImpl[] {
     source: 'builtin',
     group: 'Planning',
     defaultPermission: D.update_plan,
+    describe: (args, ctx) => checksPreview(updatedPlan(args, ctx), ctx),
     async execute(args, ctx) {
-      const out = applyPlanUpdate(ctx.conversation.plan, { goal: args.goal, design: args.design, steps: args.steps })
-      if ('error' in out) throw new ToolError(out.error)
-      ctx.services.setPlan(out.plan)
-      return { content: `Plan saved.\n${planText(out.plan, false)}` }
+      return savePlan(ctx.conversation.plan, updatedPlan(args, ctx), ctx)
+    }
+  })
+
+  tools.push({
+    name: 'set_step_status',
+    description:
+      'Change the status of one step of the current plan, without sending the plan again. Use it when you start a step ("doing") and when it is finished ("done"). Marking a step done runs its "verify" command, if it has one, and the step stays open when the command fails. When you mark a step done, the next unfinished step is started automatically.',
+    parameters: {
+      type: 'object',
+      properties: {
+        step: { type: 'integer', description: 'The number of the step, as in the plan (1 is the first).' },
+        status: { type: 'string', enum: ['todo', 'doing', 'done', 'blocked'] },
+        start_next: { type: 'boolean', description: 'When marking done: also mark the next unfinished step as doing (default true).' }
+      },
+      required: ['step', 'status']
+    },
+    source: 'builtin',
+    group: 'Planning',
+    defaultPermission: D.set_step_status,
+    describe: (args, ctx) => checksPreview(steppedPlan(args, ctx), ctx),
+    async execute(args, ctx) {
+      return savePlan(ctx.conversation.plan, steppedPlan(args, ctx), ctx)
     }
   })
 
@@ -117,6 +140,60 @@ export function planningTools(): ToolImpl[] {
   })
 
   return tools
+}
+
+/** The plan after an `update_plan` call. Throws in words the model can act on. */
+function updatedPlan(args: Record<string, unknown>, ctx: ToolContext): ConversationPlan {
+  const out = applyPlanUpdate(ctx.conversation.plan, { goal: args.goal, design: args.design, steps: args.steps })
+  if ('error' in out) throw new ToolError(out.error)
+  return out.plan
+}
+
+/** The plan after a `set_step_status` call: one step changed, and when it was finished the next one started. */
+function steppedPlan(args: Record<string, unknown>, ctx: ToolContext): ConversationPlan {
+  const prior = ctx.conversation.plan
+  if (!prior || prior.steps.length === 0) throw new ToolError('There is no plan yet. Write one with update_plan first.')
+  const number = num(args, 'step', 0)
+  const out = withStepStatus(prior, number, args.status)
+  if ('error' in out) throw new ToolError(out.error)
+  let plan = out.plan
+  if (plan.steps[number - 1]?.status === 'done' && args.start_next !== false && !plan.steps.some((s) => s.status === 'doing')) {
+    const nextIndex = plan.steps.findIndex((s) => s.status === 'todo')
+    if (nextIndex >= 0) {
+      const again = applyPlanUpdate(plan, { steps: plan.steps.map((s, i) => (i === nextIndex ? { ...s, status: 'doing' } : s)) })
+      if (!('error' in again)) plan = again.plan
+    }
+  }
+  return plan
+}
+
+/**
+ * Marking a step done runs its check, which is a shell command, so it is asked about like run_command is: the plan tools
+ * are automatic, but a command the model wrote is not run without the same permission it would need through run_command.
+ */
+function checksPreview(next: ConversationPlan, ctx: ToolContext): ApprovalPreview {
+  const commands = newlyDone(ctx.conversation.plan, next).flatMap((s) => (s.verify ? [s.verify] : []))
+  if (commands.length === 0) return { kind: 'generic', title: 'Update the plan' }
+  const runAuto = (ctx.settings.agent.toolPermissions.run_command ?? D.run_command) === 'auto'
+  return {
+    kind: 'command',
+    title: commands.length === 1 ? 'Run the check for a finished step' : `Run the checks for ${commands.length} finished steps`,
+    command: commands.join('\n'),
+    cwd: ctx.workspace ?? undefined,
+    forceApproval: !runAuto
+  }
+}
+
+/** Run the checks of steps newly done, keep the plan, and say what is left (or, when it is all done, what the final checks found). */
+async function savePlan(prior: ConversationPlan | undefined, proposed: ConversationPlan, ctx: ToolContext) {
+  const plan = await verifyDoneSteps(newlyDone(prior, proposed), proposed, ctx)
+  ctx.services.setPlan(plan)
+  let content = `Plan saved.\n${planText(plan, false)}`
+  const verified = newlyDone(prior, plan).filter((s) => s.verified)
+  if (verified.length) content += `\nChecks passed for: ${verified.map((s) => `"${s.text}"`).join(', ')}.`
+  const finishedNow = plan.steps.length > 0 && plan.steps.every((s) => s.status === 'done') && !(prior && prior.steps.length > 0 && prior.steps.every((s) => s.status === 'done'))
+  if (finishedNow) content += `\n\n${await finishReport(ctx.conversation, ctx.workspace)}`
+  return { content }
 }
 
 function nextNotes(existing: string | null, args: Record<string, unknown>): string {

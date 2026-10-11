@@ -86,6 +86,15 @@ export function parseDuckDuckGo(html: string): SearchHit[] {
   return hits
 }
 
+/**
+ * A hint for a page that came back with (almost) no text. Pages drawn by JavaScript in the browser, which is how most
+ * web apps are made, look empty to a plain download; the model should not conclude there is nothing there.
+ */
+export function emptyPageHint(text: string, isHtml: boolean, status: number): string {
+  if (status >= 400 || !isHtml || text.trim().length >= 200) return ''
+  return '\n\n[This page came back with almost no text. It is probably drawn by JavaScript in the browser, so a download cannot see its content. Do not guess what it contains. Try instead: the project\'s documentation or its source repository (many sites are open source on GitHub; read its README and files with fetch_url on raw.githubusercontent.com), a public JSON API the site uses, or web_search for a page that describes it.]'
+}
+
 export function webTools(): ToolImpl[] {
   const fetchUrl: ToolImpl = {
     name: 'fetch_url',
@@ -139,8 +148,9 @@ export function webTools(): ToolImpl[] {
       }
       const truncated = text.length > max
       if (truncated) text = text.slice(0, max)
+      const hint = emptyPageHint(text, /html|xml/i.test(type) || /^\s*<(!doctype|html)/i.test(raw), res.status)
       const head = `URL: ${res.url || u.toString()}\nStatus: ${res.status}${title ? `\nTitle: ${title}` : ''}\n\n`
-      return { content: head + text + (truncated ? `\n\n… (truncated to ${max} characters)` : ''), isError: !res.ok }
+      return { content: head + text + (truncated ? `\n\n… (truncated to ${max} characters)` : '') + hint, isError: !res.ok }
     }
   }
 

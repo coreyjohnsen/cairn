@@ -13,6 +13,7 @@ import { emit } from './events'
 import { ImageService } from './images/service'
 import { ImageStore } from './images/store'
 import { ModelService } from './models'
+import { runPageInBrowser } from './pagecheck'
 import { RemoteService, type KeepAwake } from './remote/service'
 import { ApiServer, generateApiKey } from './server/api'
 import { initPaths, type AppPaths } from './paths'
@@ -142,6 +143,7 @@ export async function createServices(opts: ServiceOptions): Promise<Services> {
     approvals,
     images,
     attachments,
+    runPage: (url, opts) => runPageInBrowser(url, opts),
     emit: (e) => emit('chat:event', e)
   })
 

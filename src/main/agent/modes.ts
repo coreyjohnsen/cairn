@@ -4,7 +4,7 @@ import type { ConversationPlan } from '@shared/types'
 import type { ToolImpl } from '../tools/types'
 
 /** What each command lets the assistant use. Planning and reviewing never change project files; the others use the usual tools. */
-const LOOK = ['list_directory', 'read_file', 'search_files', 'find_files', 'find_symbol', 'file_outline', 'find_usages', 'fetch_url', 'web_search', 'update_plan', 'update_project_notes']
+const LOOK = ['list_directory', 'read_file', 'search_files', 'find_files', 'find_symbol', 'file_outline', 'find_usages', 'check_references', 'fetch_url', 'web_search', 'update_plan', 'update_project_notes']
 const ONLY: Partial<Record<CommandId, string[]>> = {
   plan: LOOK,
   review: [...LOOK, 'run_command'],
@@ -22,22 +22,26 @@ export const allowsCreateTool = (mode: CommandId | undefined): boolean => mode =
 const PLAN = [
   'PLANNING MODE (the user started this message with /plan). Do not create, edit, move or delete any project file, and run no command that changes anything. Your job is to think the whole job through before any code exists.',
   '1. Look first. Read the project notes and the project map, then use find_symbol, file_outline and find_usages to see what the project already has that does part of this job. Name what you found.',
-  '2. Then write the complete plan with update_plan. Its "design" must cover:',
+  '2. Probe what you do not know BEFORE designing around it. For every outside service, API, file format or data source the job depends on, read its documentation and fetch a REAL sample response with fetch_url (a public API call, a README, a schema). Design against what came back, not against what you remember: endpoint paths, field names, ID formats and whether a result is a list or an object are exactly what is usually remembered wrongly. If a page comes back empty it is drawn by JavaScript: look for its documentation, its source repository or a JSON API instead. Never invent data (player lists, prices, IDs, scores): if no real source exists, say so and plan a clearly labeled placeholder or ask the user.',
+  '3. Then write the complete plan with update_plan. Its "design" must cover:',
   '   - Files: every file involved with the ONE thing it is responsible for, marked "existing: extend" or "new". A new file only when no existing file fits. Never two files for the same job.',
   '   - How the parts interact: who calls whom, what data passes between them, the public functions and types.',
-  '   - Test cases: what to test, where the tests live, the edge cases and failures.',
-  '   - Risks and open questions.',
-  '   The "steps" are in build order, each naming its files. Keep every step SMALL: one file, or one section of a larger file, that can be finished in one or two tool calls. Never make "build the whole app" one step. A big file gets one step per section.',
-  '3. Finish with a short summary and ask the user to say /build to carry it out, or tell you what to change. If something is unclear, ask before planning.'
+  '   - Interfaces: every module\'s public functions (name, arguments, result) and every element id a page needs, written down once so each file is written against the same list.',
+  '   - Test cases: what to test, where the tests live, the edge cases and failures. If the user asked for tests, the test runner is created and run once in the first steps, and every later step adds to it.',
+  '   - Unknowns you probed and what the real samples showed; risks and open questions.',
+  '   The "steps" are in build order, each naming its files and each with a "verify" command that exits 0 when the step works (`node --check file.js`, `npm test`, `python -m pytest tests/test_x.py`). Do the riskiest step first: the one that touches real data or an outside service. Build one thin slice that works from end to end (for example: load real data and show it) before adding the other features. Keep every step SMALL: one file, or one section of a larger file, that can be finished in one or two tool calls. Never make "build the whole app" one step. A big file gets one step per section.',
+  '4. Finish with a short summary and ask the user to say /build to carry it out, or tell you what to change. If something is unclear, ask before planning.'
 ].join('\n')
 
 const BUILD_WITH_PLAN = [
   'BUILD MODE (the user started this message with /build). Carry out the current plan below in order. Mark a step "doing" with update_plan when you start it and "done" when it is finished.',
-  '- Work on ONE step at a time: the one marked "doing". When it is finished, call update_plan (mark it done and the next one doing) BEFORE you start anything else. Never do several steps in one go, and never leave a finished step marked as doing.',
+  '- Work on ONE step at a time: the one marked "doing". When it is finished, call set_step_status (step number, "done") BEFORE you start anything else; it runs the step\'s check and starts the next step. Never do several steps in one go, and never leave a finished step marked as doing. If a check fails, fix what it reports; do not change the check to make it pass.',
+  '- Write against the plan\'s interfaces: use the function names, arguments and element ids the design lists. Before you call a function from another file, look at what that file really offers (file_outline), do not rely on memory of what you meant to write.',
+  '- After each file you write or edit you are told if it does not parse. Fix it immediately. For a web page, open it with run_page (and click its buttons) as soon as it can load, not at the end.',
   '- Write big files in parts: create the file with its skeleton first, then add each section with edit_file, about 150 to 250 lines per call. One huge write_file call is cut off by the token limit.',
   '- Before creating any file, check that no existing file already does that job; extend it instead.',
   '- If the plan turns out to be wrong, update it with update_plan and say why, rather than quietly doing something else.',
-  '- When all steps are done: run the project\'s typecheck, lint or tests if it has them; search for references to anything you renamed or moved; remove leftovers and dead code; add new modules to the project notes with update_project_notes. Then summarize what was built.'
+  '- When all steps are done: run check_references, and the project\'s typecheck, lint or tests (a page: run_page); search for references to anything you renamed or moved; remove leftovers and dead code; add new modules to the project notes with update_project_notes. Do not say it works until a test or check has actually passed. Then summarize what was built, and what was and was not verified.'
 ].join('\n')
 
 const BUILD_NO_PLAN = 'BUILD MODE (the user started this message with /build) but there is no plan yet. First look at the project, then write a short plan with update_plan (files and what each is responsible for, in build order), then carry it out and keep it up to date.'
@@ -93,10 +97,12 @@ export function modeDirective(mode: CommandId | undefined, plan: ConversationPla
 /** The working method, always shown when the assistant has file tools. Short, because it is sent with every request. */
 export const WORKING_METHOD = [
   '- Look before you build: read the project notes and the project map, and use find_symbol, file_outline and find_usages to see what the project already has. Extend what exists; never make a second file or function for a job that one already does.',
-  '- For a change that touches more than one or two files, first write the plan with update_plan: which file is responsible for what, how the parts interact, and how it will be tested. Make each step small (one file or one section of a file), then work through them one at a time, marking each done before starting the next.',
+  '- For a change that touches more than one or two files, first write the plan with update_plan: which file is responsible for what, how the parts interact, and how it will be tested. Make each step small (one file or one section of a file) with a "verify" command, then work through them one at a time, marking each done with set_step_status before starting the next.',
+  '- Never guess an outside service. Before writing code that calls an API or reads a data format, fetch a real sample (fetch_url, or curl with run_command) and write the code against what came back. Never invent data (names, IDs, prices); use a real source, or a placeholder that says it is one.',
   '- Write large files in parts (a skeleton first, then each section with edit_file, about 150 to 250 lines per call); a single huge write_file call is cut off.',
   '- Keep one source of truth: when you move or rename something, use find_usages to find everything that referenced it and update it in the same piece of work.',
-  '- After changing code, run the project\'s typecheck, lint or tests if it has them, and fix what they report before saying you are done.',
+  '- After changing code, run the project\'s typecheck, lint or tests if it has them, and fix what they report before saying you are done. A page is checked with run_page; calls between files with check_references. "It should work" is not a result: run something.',
+  '- If the same thing fails twice, stop and look (read_file, file_outline) instead of trying another guess.',
   '- When you add a module or settle a convention, record it in the project notes with update_project_notes (short and factual).'
 ].join('\n')
 
