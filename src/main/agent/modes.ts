@@ -27,12 +27,14 @@ const PLAN = [
   '   - How the parts interact: who calls whom, what data passes between them, the public functions and types.',
   '   - Test cases: what to test, where the tests live, the edge cases and failures.',
   '   - Risks and open questions.',
-  '   The "steps" are in build order and each names its files.',
+  '   The "steps" are in build order, each naming its files. Keep every step SMALL: one file, or one section of a larger file, that can be finished in one or two tool calls. Never make "build the whole app" one step. A big file gets one step per section.',
   '3. Finish with a short summary and ask the user to say /build to carry it out, or tell you what to change. If something is unclear, ask before planning.'
 ].join('\n')
 
 const BUILD_WITH_PLAN = [
   'BUILD MODE (the user started this message with /build). Carry out the current plan below in order. Mark a step "doing" with update_plan when you start it and "done" when it is finished.',
+  '- Work on ONE step at a time: the one marked "doing". When it is finished, call update_plan (mark it done and the next one doing) BEFORE you start anything else. Never do several steps in one go, and never leave a finished step marked as doing.',
+  '- Write big files in parts: create the file with its skeleton first, then add each section with edit_file, about 150 to 250 lines per call. One huge write_file call is cut off by the token limit.',
   '- Before creating any file, check that no existing file already does that job; extend it instead.',
   '- If the plan turns out to be wrong, update it with update_plan and say why, rather than quietly doing something else.',
   '- When all steps are done: run the project\'s typecheck, lint or tests if it has them; search for references to anything you renamed or moved; remove leftovers and dead code; add new modules to the project notes with update_project_notes. Then summarize what was built.'
@@ -91,7 +93,8 @@ export function modeDirective(mode: CommandId | undefined, plan: ConversationPla
 /** The working method, always shown when the assistant has file tools. Short, because it is sent with every request. */
 export const WORKING_METHOD = [
   '- Look before you build: read the project notes, and search the project for code that already does what you need. Extend what exists; never make a second file or function for a job that one already does.',
-  '- For a change that touches more than one or two files, first write the plan with update_plan: which file is responsible for what, how the parts interact, and how it will be tested. Keep it current as you work.',
+  '- For a change that touches more than one or two files, first write the plan with update_plan: which file is responsible for what, how the parts interact, and how it will be tested. Make each step small (one file or one section of a file), then work through them one at a time, marking each done before starting the next.',
+  '- Write large files in parts (a skeleton first, then each section with edit_file, about 150 to 250 lines per call); a single huge write_file call is cut off.',
   '- Keep one source of truth: when you move or rename something, search for everything that referenced it and update it in the same piece of work.',
   '- After changing code, run the project\'s typecheck, lint or tests if it has them, and fix what they report before saying you are done.',
   '- When you add a module or settle a convention, record it in the project notes with update_project_notes (short and factual).'

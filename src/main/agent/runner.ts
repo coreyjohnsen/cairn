@@ -18,6 +18,7 @@ import type {
   ToolPermission
 } from '@shared/types'
 import { COMMANDS, type CommandId, DEFAULT_ARG, parseCommand } from '@shared/commands'
+import { planReminder } from '@shared/plan'
 import { newId } from '@shared/defaults'
 import { DEFAULT_TITLE, type ConversationStore } from '../conversations'
 import { emit } from '../events'
@@ -88,6 +89,18 @@ interface ActiveRun {
 }
 
 class RunError extends Error {}
+
+/** Tools whose answer carries a reminder of the plan step. */
+const PLAN_REMINDER_TOOLS = new Set(['write_file', 'edit_file', 'move_path', 'delete_path'])
+
+function isCompleteJson(raw: string): boolean {
+  try {
+    JSON.parse(raw || '{}')
+    return true
+  } catch {
+    return false
+  }
+}
 
 function isAbortError(e: unknown): boolean {
   return e instanceof Error && (e.name === 'AbortError' || /aborted|abort/i.test(e.message) && e.name !== 'ProviderError')
@@ -557,9 +570,10 @@ export class ChatRunner {
 
       if (!toolCalls.length) return
 
+      const cutOff = finishReason === 'length' || finishReason === 'max_tokens'
       for (const tc of toolCalls) {
         if (signal.aborted) return
-        await this.runTool(run, toolMap, tc, workspace)
+        await this.runTool(run, toolMap, tc, workspace, cutOff)
       }
     }
 
@@ -701,7 +715,7 @@ export class ChatRunner {
     }
   }
 
-  private async runTool(run: ActiveRun, toolMap: Map<string, ToolImpl>, tc: ToolCall, workspace: string | null): Promise<void> {
+  private async runTool(run: ActiveRun, toolMap: Map<string, ToolImpl>, tc: ToolCall, workspace: string | null, cutOff = false): Promise<void> {
     const { conv } = run
     const settings = this.d.getSettings()
     const tool = toolMap.get(tc.name)
@@ -712,6 +726,11 @@ export class ChatRunner {
       let content = truncateMiddle(r.content ?? '', limit)
       if (memoryLimit < userLimit && content.length < (r.content ?? '').length) {
         content += `\n[Cut to fit the model's memory (${run.budget} tokens). Ask for smaller pieces, e.g. a line range, or raise Context size in Models → Local models.]`
+      }
+      // After a change to files, remind the model of the step it is on, so it keeps the plan current and does one step at a time.
+      if (!r.isError && !r.denied && PLAN_REMINDER_TOOLS.has(tc.name)) {
+        const reminder = planReminder(conv.plan)
+        if (reminder) content += `\n\n${reminder}`
       }
       const msg: ChatMessage = {
         id: newId('m_'),
@@ -730,6 +749,14 @@ export class ChatRunner {
     if (!tool) {
       finish({
         content: `Unknown tool "${tc.name}". Available tools: ${[...toolMap.keys()].join(', ') || '(none)'}.`,
+        isError: true
+      })
+      return
+    }
+    // A call that was cut off by the token limit must not be repaired into something shorter: a file written that way is silently incomplete.
+    if (cutOff && !isCompleteJson(tc.arguments)) {
+      finish({
+        content: `This call was cut off because your reply reached the token limit, so it was NOT run (a partial ${tc.name === 'write_file' ? 'file' : 'call'} would have been wrong). Make it smaller: for a large file, create it with just its skeleton and then add each section with edit_file, about 150 to 250 lines per call.`,
         isError: true
       })
       return
