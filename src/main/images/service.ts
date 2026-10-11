@@ -161,6 +161,7 @@ export class ImageService implements ImageApi {
           defaults: m.defaults,
           arch: m.arch,
           vaeTiling: m.vaeTiling,
+          inpaint: m.inpaint,
           available: !reason,
           unavailableReason: reason
         }))

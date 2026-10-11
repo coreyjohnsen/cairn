@@ -291,7 +291,8 @@ export class SdCppBackend implements ImageBackend {
       label: m.name,
       defaults: { width: m.width, height: m.height, steps: m.steps, cfg: m.cfg, sampler: m.sampler },
       arch: m.arch,
-      vaeTiling: m.vaeTiling
+      vaeTiling: m.vaeTiling,
+      inpaint: m.inpaint
     }))
   }
 

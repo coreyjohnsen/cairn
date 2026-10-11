@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { guessImageFolder } from '@shared/naming'
 import type { ImageBackendConfig, LoraFile, SdArch, SdModelConfig } from '@shared/types'
 import { IMAGE_BACKEND_PRESETS, SD_SAMPLERS, STARTER_PACKS, type StarterPack, blankSdModel, newId } from '@shared/defaults'
-import { Badge, Button, Card, Field, IconButton, MenuItem, Modal, Notice, NumberField, Popover, Progress, Section, Segmented, Select, Switch, TextField } from '@/components/ui'
+import { Badge, Button, Card, Disclosure, Field, IconButton, MenuItem, Modal, Notice, NumberField, Popover, Progress, Section, Segmented, Select, Switch, TextField } from '@/components/ui'
 import { invoke } from '@/lib/api'
 import { baseName, errorText, formatBytes } from '@/lib/format'
 import { useApp } from '@/store/app'
@@ -87,6 +87,9 @@ function SdModelEditor({ initial, onClose }: { initial: SdModelConfig; onClose: 
       <div className="stack" style={{ gap: 18, paddingTop: 6 }}>
         <Field label="Name">
           <TextField value={m.name} onCommit={(v) => set({ name: v })} onDraft={(v) => set({ name: v })} autoFocus />
+        </Field>
+        <Field row label="Inpainting model" hint="Trained to fill in a painted part so it blends with the rest of the picture. It is offered when you paint on a picture, and listed under Inpainting models.">
+          <Switch checked={!!m.inpaint} onChange={(v) => set({ inpaint: v || undefined })} />
         </Field>
         <Field label="Type" hint="Decides which files are needed and sensible starting settings.">
           <Select className="grow" value={m.arch} onChange={changeArch} options={(Object.keys(ARCH_LABEL) as SdArch[]).map((a) => ({ value: a, label: ARCH_LABEL[a] }))} />
@@ -540,6 +543,40 @@ export function ImageModels() {
   const defTarget = settings.image.defaultTarget
   const availableTargets = targets.filter((t) => t.available)
 
+  const modelRow = (m: SdModelConfig) => (
+      <Row
+        key={m.id}
+        title={
+          <span className="row" style={{ gap: 8 }}>
+            <span className="ellipsis">{m.name}</span>
+            <Badge>{m.arch.toUpperCase()}</Badge>
+          </span>
+        }
+        sub={baseName(m.model || m.diffusionModel) || 'No file chosen'}
+        right={
+          <div className="row" style={{ gap: 4 }}>
+            <IconButton label="Edit" size="sm" onClick={() => setEditing(m)}>
+              <Pencil size={15} />
+            </IconButton>
+            {doomed === m.id ? (
+              <>
+                <Button size="sm" variant="danger" onClick={() => { update((s) => ({ image: { ...s.image, localModels: s.image.localModels.filter((x) => x.id !== m.id) } })); setDoomed(null); setTimeout(() => void useImages.getState().refreshTargets(true), 400) }}>
+                  Remove
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setDoomed(null)}>
+                  Keep
+                </Button>
+              </>
+            ) : (
+              <IconButton label="Remove from list (files stay on disk)" size="sm" danger onClick={() => setDoomed(m.id)}>
+                <Trash2 size={15} />
+              </IconButton>
+            )}
+          </div>
+        }
+      />
+  )
+
   return (
     <>
       <EngineBanner />
@@ -568,42 +605,8 @@ export function ImageModels() {
           </Popover>
         }
       >
-        {models.length === 0 && <div className="faint small">No models yet. Start with a starter model below, or add files you already have.</div>}
-        <div className="list">
-          {models.map((m) => (
-            <Row
-              key={m.id}
-              title={
-                <span className="row" style={{ gap: 8 }}>
-                  <span className="ellipsis">{m.name}</span>
-                  <Badge>{m.arch.toUpperCase()}</Badge>
-                </span>
-              }
-              sub={baseName(m.model || m.diffusionModel) || 'No file chosen'}
-              right={
-                <div className="row" style={{ gap: 4 }}>
-                  <IconButton label="Edit" size="sm" onClick={() => setEditing(m)}>
-                    <Pencil size={15} />
-                  </IconButton>
-                  {doomed === m.id ? (
-                    <>
-                      <Button size="sm" variant="danger" onClick={() => { update((s) => ({ image: { ...s.image, localModels: s.image.localModels.filter((x) => x.id !== m.id) } })); setDoomed(null); setTimeout(() => void useImages.getState().refreshTargets(true), 400) }}>
-                        Remove
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setDoomed(null)}>
-                        Keep
-                      </Button>
-                    </>
-                  ) : (
-                    <IconButton label="Remove from list (files stay on disk)" size="sm" danger onClick={() => setDoomed(m.id)}>
-                      <Trash2 size={15} />
-                    </IconButton>
-                  )}
-                </div>
-              }
-            />
-          ))}
-        </div>
+        {models.filter((m) => !m.inpaint).length === 0 && <div className="faint small">No models yet. Start with a starter model below, or add files you already have.</div>}
+        <div className="list">{models.filter((m) => !m.inpaint).map(modelRow)}</div>
         {loose.length > 0 && (
           <div className="stack" style={{ gap: 6 }}>
             <div className="menu-heading" style={{ padding: 0 }}>
@@ -638,6 +641,41 @@ export function ImageModels() {
           </div>
         )}
         <DownloadsList subdir="image" />
+      </Section>
+
+      <Section
+        title="Inpainting models"
+        subtitle="When you paint over part of a picture, these fill it in so the new part blends with the old. They are chosen next to the paint tools, under Paint options, instead of the model you made the picture with."
+        actions={
+          <Popover
+            align="end"
+            width={250}
+            trigger={({ toggle, ref }) => (
+              <Button ref={ref} icon={<Plus size={16} />} onClick={toggle}>
+                Add inpainting model
+              </Button>
+            )}
+          >
+            {(close) => (
+              <div>
+                {(['sd', 'sdxl', 'flux', 'custom'] as SdArch[]).map((a) => (
+                  <MenuItem key={a} onClick={() => { close(); setEditing({ ...blankSdModel(a), name: `New ${ARCH_LABEL[a]} inpainting model`, inpaint: true }) }}>
+                    {ARCH_LABEL[a]}
+                  </MenuItem>
+                ))}
+              </div>
+            )}
+          </Popover>
+        }
+      >
+        {models.some((m) => m.inpaint) ? (
+          <div className="list">{models.filter((m) => m.inpaint).map(modelRow)}</div>
+        ) : (
+          <div className="faint small">None yet. Download one below, add its file here, or switch “Inpainting model” on when you edit a model you already have.</div>
+        )}
+        <Disclosure id="find-inpaint" title="Find inpainting models" summary="Hugging Face">
+          <HfBrowser kind="image" subdir="image" accept={(p) => /\.(safetensors|gguf|ckpt)$/i.test(p)} placeholder="Search inpainting models, or paste owner/name" suggestions={['SD 1.5 inpainting', 'SDXL inpainting', 'FLUX Fill', 'Juggernaut inpainting', 'RealVisXL inpainting']} />
+        </Disclosure>
       </Section>
 
       <Section title="Starter models" subtitle="One click downloads the files and sets the model up. Sizes are large, so check your disk space and video memory first.">

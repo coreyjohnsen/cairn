@@ -5,6 +5,7 @@ import { invoke, mediaUrl } from '@/lib/api'
 import { cx, errorText } from '@/lib/format'
 import { isClear } from '@/lib/imageForm'
 import { SAMPLERS } from '@/lib/imageSize'
+import { InpaintModelPicker } from '@/components/InpaintModelPicker'
 import { loraSectionShown } from '@/components/LoraPicker'
 import { strengthLabel } from '@shared/img2img'
 import { useApp } from '@/store/app'
@@ -157,6 +158,11 @@ export function CreateSheet() {
               <button type="button" className="btn btn-secondary start-pick" onClick={() => openLayer('paint')}>
                 <Brush size={17} /> <span>{form.mask ? 'Change the painted part' : 'Paint the part to change'}</span>
               </button>
+              {form.mask && (
+                <div className="mask-model">
+                  <InpaintModelPicker form={form} setForm={setForm} target={target} choices={hub.inpaintTargets} />
+                </div>
+              )}
               {form.mask ? (
                 <div className="mask-meta">
                   <img src={form.mask.preview} alt="" />

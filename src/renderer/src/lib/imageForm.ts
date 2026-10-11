@@ -36,6 +36,8 @@ export interface HubForm {
   feather: number
   /** Margin kept around the mask when only the masked part is sent. */
   padding: number
+  /** `${backendId}::${model}` of an inpainting model to use for the painted edit; empty = the model chosen for the picture. */
+  inpaintTargetKey?: string
   /** LoRAs to apply (built-in engine only). */
   loras: LoraSelection[]
   /** Make the finished picture bigger with this upscaler. */

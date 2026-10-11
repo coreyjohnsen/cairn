@@ -2,12 +2,14 @@ import { Brush, Contrast, Eraser, Hand, Lasso, Maximize2, Redo2, SlidersHorizont
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { fitWithin } from '@shared/img2img'
+import { InpaintModelPicker } from '@/components/InpaintModelPicker'
 import { MaskPainter, type PainterApi, type PainterState } from '@/components/MaskPainter'
 import { Segmented, Slider } from '@/components/ui'
 import { mediaUrl } from '@/lib/api'
 import { cx } from '@/lib/format'
 import { type Tool, brushRange } from '@/lib/maskPaint'
 import { useImages } from '@/store/images'
+import { useHub } from '@/views/images/useHub'
 import { useNav } from '../store/nav'
 
 const TOOLS: { id: Tool; label: string; icon: typeof Brush }[] = [
@@ -22,8 +24,10 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush }[] = [
 function PaintOptions() {
   const form = useImages((s) => s.form)
   const setForm = useImages((s) => s.setForm)
+  const hub = useHub()
   return (
     <div className="paint-opts">
+      <InpaintModelPicker form={form} setForm={setForm} target={hub.target} choices={hub.inpaintTargets} />
       <div>
         <div className="small dim paint-opt-label">Repaint</div>
         <Segmented

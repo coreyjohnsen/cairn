@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { stepsRun, strengthLabel, fitWithin } from '@shared/img2img'
 import type { ImageRecord } from '@shared/types'
 import { ImageProgress } from '@/components/ImageProgress'
+import { InpaintModelPicker } from '@/components/InpaintModelPicker'
 import { MaskPainter, type PainterApi, type PainterState } from '@/components/MaskPainter'
 import { Button, IconButton, Notice, Popover, Segmented, Slider } from '@/components/ui'
 import { mediaUrl } from '@/lib/api'
@@ -24,8 +25,10 @@ const TOOLS: { id: Tool; label: string; key: string; icon: typeof Brush }[] = [
 function MaskOptions() {
   const form = useImages((s) => s.form)
   const setForm = useImages((s) => s.setForm)
+  const hub = useHub()
   return (
     <div className="edit-opts">
+      <InpaintModelPicker form={form} setForm={setForm} target={hub.target} choices={hub.inpaintTargets} />
       <div>
         <div className="small dim" style={{ marginBottom: 6 }}>
           Repaint

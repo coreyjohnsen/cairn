@@ -1382,3 +1382,7 @@
     min-height: 40px;
   }
 }
+
+.inpaint-model-label {
+  margin: 6px 0;
+}

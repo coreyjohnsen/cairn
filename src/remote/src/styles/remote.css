@@ -1766,3 +1766,10 @@ input[type='range'] {
 .paint-opt-label {
   margin: 6px 0;
 }
+
+.mask-model {
+  margin-top: 10px;
+}
+.inpaint-model-label {
+  margin: 6px 0;
+}
