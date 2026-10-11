@@ -8,7 +8,7 @@ import { useComposerBus } from '@/store/composer'
 import { useImages } from '@/store/images'
 import { SummaryModal } from './ContextMeter'
 import { Markdown } from './Markdown'
-import { ToolCard } from './ToolCard'
+import { ToolCard, ToolWriting } from './ToolCard'
 import { ImageProgress } from './ImageProgress'
 import { Button, IconButton, Modal } from './ui'
 
@@ -163,6 +163,7 @@ interface AssistantProps {
 const AssistantMessage = memo(function AssistantMessage({ m, results, live, showModel, footer, progress, canRegenerate }: AssistantProps) {
   const regenerate = useChat((s) => s.regenerate)
   const streaming = m.status === 'streaming'
+  const writing = useChat((s) => (streaming ? s.toolStream[m.id]?.calls : undefined))
   const hasBody = !!m.content || !!m.reasoning || !!m.toolCalls?.length || !!m.notice || !!m.error
   const u = m.usage
   return (
@@ -170,7 +171,8 @@ const AssistantMessage = memo(function AssistantMessage({ m, results, live, show
       {showModel && m.model && <div className="msg-model">{m.model}</div>}
       {m.reasoning && <Reasoning text={m.reasoning} streaming={streaming && !m.content} />}
       {m.content && <Markdown text={m.content} />}
-      {streaming && !m.content && !m.reasoning && !m.toolCalls?.length && <Typing />}
+      {streaming && !m.content && !m.reasoning && !m.toolCalls?.length && !writing?.length && <Typing />}
+      {writing && writing.length > 0 && <ToolWriting calls={writing} />}
       {m.toolCalls?.map((tc) => {
         const r = results.get(tc.id)
         const imgs = r?.images

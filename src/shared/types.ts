@@ -267,10 +267,20 @@ export interface ApprovalRequest {
 
 export type ApprovalDecision = 'allow' | 'allow-chat' | 'always' | 'deny'
 
+/** A tool call the model is still writing: nothing can run until it has sent all of it, which for a file can take minutes. */
+export interface ToolStream {
+  name: string
+  /** Characters of arguments received so far. */
+  chars: number
+  /** The start of the arguments: enough to tell what the call is about (a file path, a command) without sending a whole file around. */
+  head: string
+}
+
 export type ChatEvent =
   | { type: 'run-start'; runId: string; conversationId: string }
   | { type: 'message'; runId: string; conversationId: string; message: ChatMessage }
   | { type: 'delta'; runId: string; conversationId: string; messageId: string; content?: string; reasoning?: string }
+  | { type: 'tool-stream'; runId: string; conversationId: string; messageId: string; calls: ToolStream[] }
   | { type: 'tool-progress'; runId: string; conversationId: string; toolCallId: string; label?: string; progress?: number; stage?: ImageStage }
   | { type: 'approval'; runId: string; conversationId: string; approval: ApprovalRequest }
   | { type: 'approval-resolved'; runId: string; conversationId: string; approvalId: string }

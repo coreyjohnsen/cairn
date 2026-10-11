@@ -489,6 +489,13 @@ async function runChat(conv: Conversation, text: string, mode: 'chat' | 'image' 
       chatEvent({ type: 'status', runId, conversationId: conv.id, status: 'Thinking…' })
       await streamText(conv, runId, a1, 'I will update the README so the usage section matches the script.', ctl.signal)
       a1.content = 'I will update the README so the usage section matches the script.'
+      // The call arrives piece by piece; the window says what is being written until it is complete.
+      const head = '{"path": "README.md", "old_string": "python sort.py notes/", "new_string": "python scripts/sort_names.py notes/"}'
+      for (let chars = 0; chars <= 4200; chars += 350) {
+        if (ctl.signal.aborted) throw new Error('aborted')
+        chatEvent({ type: 'tool-stream', runId, conversationId: conv.id, messageId: a1.id, calls: [{ name: 'edit_file', chars, head: head.slice(0, Math.max(0, Math.min(head.length, chars / 3))) }] })
+        await sleep(450)
+      }
       a1.toolCalls = [{ id: callId, name: 'edit_file', arguments: JSON.stringify({ path: 'README.md', old_string: 'python sort.py notes/', new_string: 'python scripts/sort_names.py notes/' }) }]
       a1.status = 'done'
       push({ ...a1 })

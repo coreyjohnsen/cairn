@@ -1,11 +1,11 @@
 import { AlertTriangle, Check, ChevronRight, FilePen, FilePlus, FileText, FolderOpen, Globe, ImageIcon, MoveRight, Puzzle, Search, SearchCode, Terminal, Trash2, X } from 'lucide-react'
 import { memo, useState } from 'react'
-import type { ChatMessage, ToolCall, ToolProgress } from '@shared/types'
-import { cx, formatBytes } from '@/lib/format'
-import { type ToolIconKey, parseArgs, presentTense, summarizeTool } from '@/lib/toolSummary'
-import { Progress } from './ui'
+import type { ChatMessage, ToolCall, ToolProgress, ToolStream } from '@shared/types'
+import { cx, formatBytes, formatCount } from '@/lib/format'
+import { type ToolIconKey, parseArgs, presentTense, summarizeStreaming, summarizeTool } from '@/lib/toolSummary'
+import { Progress, Spinner } from './ui'
 
-const ICONS: Record<ToolIconKey, typeof FileText> = {
+export const ICONS: Record<ToolIconKey, typeof FileText> = {
   read: FileText,
   write: FilePlus,
   edit: FilePen,
@@ -111,3 +111,30 @@ export const ToolCard = memo(function ToolCard({ call, result, live, progress, d
     </div>
   )
 })
+
+/**
+ * What the model is writing while a tool call is still arriving. The call is only shown, and can only run, once all of
+ * it has been sent, which for a whole file can take minutes: this keeps the chat from looking stuck meanwhile.
+ */
+export function ToolWriting({ calls }: { calls: ToolStream[] }) {
+  return (
+    <>
+      {calls
+        .filter((c) => c.name)
+        .map((c, i) => {
+          const sum = summarizeStreaming(c.name, c.head)
+          const Icon = ICONS[sum.icon]
+          return (
+            <div key={i} className="tool-writing" role="status">
+              <Spinner size={14} />
+              <Icon size={15} className="tool-icon" />
+              <span className="tool-verb">{presentTense(sum.verb)}</span>
+              {sum.target && <span className="tool-target mono ellipsis">{sum.target}</span>}
+              <span className="grow" />
+              <span className="faint xs">{c.chars > 0 ? `${formatCount(c.chars)} characters so far` : 'starting…'}</span>
+            </div>
+          )
+        })}
+    </>
+  )
+}

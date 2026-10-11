@@ -697,6 +697,19 @@
   overflow: hidden;
   transition: border-color var(--t-fast);
 }
+.tool-writing {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 38px;
+  padding: 6px 12px;
+  font-size: 0.88rem;
+  border-radius: var(--r-md);
+  border: 1px dashed var(--line-strong);
+  background: var(--bg-2);
+  color: var(--fg-dim);
+}
 .tool-card:hover {
   border-color: var(--line-strong);
 }

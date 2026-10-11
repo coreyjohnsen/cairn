@@ -32,6 +32,9 @@ import { estimateTokens, fitHistory, historyFor, totalTokens } from './context'
 import { detectImageRequest, isExplicitImageCommand } from './intent'
 import { buildSystemPrompt } from './prompt'
 
+/** How much of a streaming tool call's arguments goes to the window to say what it is about (a file path or a command comes first). */
+const TOOL_HEAD = 400
+
 export interface ResolvedModel {
   option: ModelOption
   provider: Provider
@@ -387,10 +390,22 @@ export class ChatRunner {
       const calls = new Map<number, { id: string; name: string; args: string }>()
       let pendingText = ''
       let pendingReasoning = ''
+      let toolsChanged = false
       let timer: NodeJS.Timeout | null = null
       let finishReason: string | undefined
       const flush = () => {
         timer = null
+        // A tool call is only shown once the model has sent all of it. Say what it is writing meanwhile, so a long file does not look like a hang.
+        if (toolsChanged) {
+          toolsChanged = false
+          this.d.emit({
+            type: 'tool-stream',
+            runId: run.runId,
+            conversationId: conv.id,
+            messageId: assistant.id,
+            calls: [...calls.entries()].sort(([a], [b]) => a - b).map(([, c]) => ({ name: c.name, chars: c.args.length, head: c.args.slice(0, TOOL_HEAD) }))
+          })
+        }
         if (!pendingText && !pendingReasoning) return
         this.d.emit({
           type: 'delta',
@@ -435,6 +450,8 @@ export class ChatRunner {
               if (ev.name) cur.name = ev.name
               if (ev.args) cur.args += ev.args
               calls.set(ev.index, cur)
+              toolsChanged = true
+              schedule()
             } else if (ev.type === 'usage') {
               assistant.usage = {
                 promptTokens: ev.promptTokens ?? assistant.usage?.promptTokens,
