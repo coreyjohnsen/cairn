@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { RemoteDevice, RemotePairing, RemoteStatus } from '@shared/types'
 import { invoke, on } from '@/lib/api'
+import { subscribeOnce } from '@/lib/subscribeOnce'
 import { errorText } from '@/lib/format'
 import { useApp } from './app'
 
@@ -33,8 +34,10 @@ export const useRemote = create<RemoteState>()((set, get) => ({
   busy: false,
 
   async init() {
-    on('remote:status', (status) => set({ status }))
-    on('remote:paired', (paired) => set({ paired, offer: null }))
+    subscribeOnce('remote', () => {
+      on('remote:status', (status) => set({ status }))
+      on('remote:paired', (paired) => set({ paired, offer: null }))
+    })
     try {
       set({ status: await invoke('remote:status') })
     } catch {

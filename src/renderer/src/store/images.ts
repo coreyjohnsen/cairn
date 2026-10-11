@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ImageGenRequest, ImageJob, ImageRecord, ImageTargetOption, LoraFile, LoraSelection, UpscalerFile } from '@shared/types'
 import { invoke, on } from '@/lib/api'
+import { subscribeOnce } from '@/lib/subscribeOnce'
 import { errorText } from '@/lib/format'
 import { DEFAULT_FORM, type HubForm, type StartMode, formAfterPatch, startModeFor } from '@/lib/imageForm'
 import { type Ratio, resolveSize } from '@/lib/imageSize'
@@ -80,16 +81,18 @@ export const useImages = create<ImagesState>()((set, get) => ({
   focus: null,
 
   async init() {
-    on('images:added', (r) => set((s) => ({ records: [r, ...s.records.filter((x) => x.id !== r.id)].sort(byNewest) })))
-    on('images:updated', (r) => set((s) => ({ records: s.records.map((x) => (x.id === r.id ? r : x)) })))
-    on('images:removed', (ids) =>
-      set((s) => ({ records: s.records.filter((x) => !ids.includes(x.id)), viewing: s.viewing && ids.includes(s.viewing) ? null : s.viewing, siblings: s.siblings.filter((x) => !ids.includes(x)) }))
-    )
-    on('images:job', (j) => {
-      const before = get().jobs[j.id]
-      set((s) => ({ jobs: { ...s.jobs, [j.id]: j } }))
-      // The picture was made, but something did not work as asked (for example an upscaler that was ignored).
-      if (j.status === 'done' && j.notice && before?.status !== 'done') useApp.getState().toast('error', j.notice)
+    subscribeOnce('images', () => {
+      on('images:added', (r) => set((s) => ({ records: [r, ...s.records.filter((x) => x.id !== r.id)].sort(byNewest) })))
+      on('images:updated', (r) => set((s) => ({ records: s.records.map((x) => (x.id === r.id ? r : x)) })))
+      on('images:removed', (ids) =>
+        set((s) => ({ records: s.records.filter((x) => !ids.includes(x.id)), viewing: s.viewing && ids.includes(s.viewing) ? null : s.viewing, siblings: s.siblings.filter((x) => !ids.includes(x)) }))
+      )
+      on('images:job', (j) => {
+        const before = get().jobs[j.id]
+        set((s) => ({ jobs: { ...s.jobs, [j.id]: j } }))
+        // The picture was made, but something did not work as asked (for example an upscaler that was ignored).
+        if (j.status === 'done' && j.notice && before?.status !== 'done') useApp.getState().toast('error', j.notice)
+      })
     })
     const [records, jobs] = await Promise.all([invoke('images:list'), invoke('images:jobs')])
     set({ records: records.sort(byNewest), jobs: Object.fromEntries(jobs.map((j) => [j.id, j])) })

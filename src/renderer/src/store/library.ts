@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { DownloadItem, EngineId, EngineInstallProgress, EngineStatus, GpuInfo, ImageWeightFile, LlamaStatus, LocalModelFile, McpStatus, ToolInfo } from '@shared/types'
 import { invoke, on } from '@/lib/api'
+import { subscribeOnce } from '@/lib/subscribeOnce'
 import { errorText } from '@/lib/format'
 import { useApp } from './app'
 import { useImages } from './images'
@@ -34,29 +35,31 @@ export const useLibrary = create<LibraryState>()((set, get) => ({
   tools: [],
 
   async init() {
-    on('engines:progress', (p) => {
-      set((s) => ({ install: { ...s.install, [p.engine]: p } }))
-      if (p.phase === 'done') {
-        void get().refreshEngine(p.engine)
-        // The upscale engine brings its own models, so the upscaler lists change when it is installed.
-        if (p.engine === 'esrgan') void useImages.getState().refreshAssets()
-      }
-    })
-    on('engines:changed', (id) => {
-      void get().refreshEngine(id)
-      if (id === 'esrgan') void useImages.getState().refreshAssets()
-    })
-    on('llama:status', (l) => set({ llama: l }))
-    on('mcp:status', (mcp) => {
-      set({ mcp })
-      void get().refreshTools()
-    })
-    on('downloads:update', (d) => {
-      set((s) => ({ downloads: s.downloads.some((x) => x.id === d.id) ? s.downloads.map((x) => (x.id === d.id ? d : x)) : [...s.downloads, d] }))
-      if (d.status === 'done') {
-        void get().refreshFiles()
-        void useApp.getState().refreshModels(true)
-      }
+    subscribeOnce('library', () => {
+      on('engines:progress', (p) => {
+        set((s) => ({ install: { ...s.install, [p.engine]: p } }))
+        if (p.phase === 'done') {
+          void get().refreshEngine(p.engine)
+          // The upscale engine brings its own models, so the upscaler lists change when it is installed.
+          if (p.engine === 'esrgan') void useImages.getState().refreshAssets()
+        }
+      })
+      on('engines:changed', (id) => {
+        void get().refreshEngine(id)
+        if (id === 'esrgan') void useImages.getState().refreshAssets()
+      })
+      on('llama:status', (l) => set({ llama: l }))
+      on('mcp:status', (mcp) => {
+        set({ mcp })
+        void get().refreshTools()
+      })
+      on('downloads:update', (d) => {
+        set((s) => ({ downloads: s.downloads.some((x) => x.id === d.id) ? s.downloads.map((x) => (x.id === d.id ? d : x)) : [...s.downloads, d] }))
+        if (d.status === 'done') {
+          void get().refreshFiles()
+          void useApp.getState().refreshModels(true)
+        }
+      })
     })
     const [downloads, llama, mcp] = await Promise.all([invoke('downloads:list'), invoke('llama:status'), invoke('mcp:status')])
     set({ downloads, llama, mcp })
