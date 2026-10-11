@@ -401,5 +401,60 @@ export const STARTER_PACKS: StarterPack[] = [
       }
     ],
     defaults: { steps: 8, cfg: 1, sampler: 'euler', width: 1024, height: 1024, offloadToCpu: true, vaeTiling: true }
+  },
+  {
+    id: 'sd15-inpainting',
+    title: 'SD 1.5 Inpainting',
+    blurb: 'Fills in a painted part so it blends with the rest of the picture. Small and fast: runs on 4 GB+ cards. Offered when you paint on a picture.',
+    arch: 'sd',
+    vramHint: '4 GB+',
+    files: [
+      {
+        url: 'https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-inpainting/resolve/main/sd-v1-5-inpainting.ckpt',
+        filename: 'sd-v1-5-inpainting.ckpt',
+        subdir: 'image',
+        role: 'model',
+        sizeHint: '4.3 GB'
+      }
+    ],
+    defaults: { inpaint: true, steps: 30, cfg: 7, sampler: 'euler_a', width: 512, height: 512 }
+  },
+  {
+    id: 'flux-fill-dev',
+    title: 'FLUX.1 Fill [dev]',
+    blurb: 'The best blend and detail for painted edits, but heavy: the main file is about 24 GB, so it runs with weights kept in system memory on a 16 GB card, slowly. The main file is gated: accept the licence on its Hugging Face page and add an access token in Settings → Storage first. Needs the three helper files below.',
+    arch: 'flux',
+    vramHint: '16 GB+',
+    files: [
+      {
+        url: 'https://huggingface.co/black-forest-labs/FLUX.1-Fill-dev/resolve/main/flux1-fill-dev.safetensors',
+        filename: 'flux1-fill-dev.safetensors',
+        subdir: 'image',
+        role: 'diffusionModel',
+        sizeHint: '23.8 GB'
+      },
+      {
+        url: 'https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/ae.safetensors',
+        filename: 'flux-ae.safetensors',
+        subdir: 'image/vae',
+        role: 'vae',
+        sizeHint: '335 MB'
+      },
+      {
+        url: 'https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors',
+        filename: 'clip_l.safetensors',
+        subdir: 'image/text-encoders',
+        role: 'clipL',
+        sizeHint: '246 MB'
+      },
+      {
+        url: 'https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors',
+        filename: 't5xxl_fp16.safetensors',
+        subdir: 'image/text-encoders',
+        role: 't5xxl',
+        sizeHint: '9.8 GB'
+      }
+    ],
+    defaults: { inpaint: true, steps: 30, cfg: 1, sampler: 'euler', width: 1024, height: 1024, clipOnCpu: true, vaeTiling: true, offloadToCpu: true, extraArgs: '--guidance 30' }
   }
 ]

@@ -673,6 +673,11 @@ export function ImageModels() {
         ) : (
           <div className="faint small">None yet. Download one below, add its file here, or switch “Inpainting model” on when you edit a model you already have.</div>
         )}
+        <div className="grid-2">
+          {STARTER_PACKS.filter((p) => p.defaults?.inpaint).map((p) => (
+            <StarterCard key={p.id} pack={p} />
+          ))}
+        </div>
         <Disclosure id="find-inpaint" title="Find inpainting models" summary="Hugging Face">
           <HfBrowser kind="image" subdir="image" accept={(p) => /\.(safetensors|gguf|ckpt)$/i.test(p)} placeholder="Search inpainting models, or paste owner/name" suggestions={['SD 1.5 inpainting', 'SDXL inpainting', 'FLUX Fill', 'Juggernaut inpainting', 'RealVisXL inpainting']} />
         </Disclosure>
@@ -680,7 +685,7 @@ export function ImageModels() {
 
       <Section title="Starter models" subtitle="One click downloads the files and sets the model up. Sizes are large, so check your disk space and video memory first.">
         <div className="grid-2">
-          {STARTER_PACKS.map((p) => (
+          {STARTER_PACKS.filter((p) => !p.defaults?.inpaint).map((p) => (
             <StarterCard key={p.id} pack={p} />
           ))}
         </div>
