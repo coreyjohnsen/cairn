@@ -24,6 +24,10 @@
   flex-direction: column;
   gap: 16px;
 }
+/* Parts keep their own height and this area scrolls. Without it a part with overflow: hidden (the folded sections) shrinks to fit and is cut off. */
+.create-scroll > * {
+  flex-shrink: 0;
+}
 .create-title {
   display: flex;
   align-items: center;

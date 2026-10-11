@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { ModelOption, Settings, SystemInfo } from '@shared/types'
 import type { ToastItem } from '@/components/ui'
 import { invoke, on } from '@/lib/api'
+import { subscribeOnce } from '@/lib/subscribeOnce'
 import { errorText } from '@/lib/format'
 
 export type ViewId = 'chat' | 'images' | 'models' | 'tools' | 'settings'
@@ -43,9 +44,11 @@ export const useApp = create<AppState>()((set, get) => ({
   async init() {
     const [settings, system] = await Promise.all([invoke('settings:get'), invoke('system:info')])
     set({ settings, system, ready: true })
-    on('settings:changed', (s) => {
-      // Ignore echoes while our own edits are still in flight so typing never jumps back.
-      if (pending === 0) set({ settings: s })
+    subscribeOnce('app', () => {
+      on('settings:changed', (s) => {
+        // Ignore echoes while our own edits are still in flight so typing never jumps back.
+        if (pending === 0) set({ settings: s })
+      })
     })
     void get().refreshModels()
   },
