@@ -55,6 +55,21 @@ export function planProgress(plan: Pick<ConversationPlan, 'steps'>): { done: num
   return { done: plan.steps.filter((s) => s.status === 'done').length, total: plan.steps.length }
 }
 
+/**
+ * A short reminder added to the answer of a tool that changed files, so the model keeps the plan current and does one
+ * step at a time. Empty when there is no plan or it is finished.
+ */
+export function planReminder(plan: ConversationPlan | undefined): string {
+  if (!plan || plan.steps.length === 0) return ''
+  const open = plan.steps.filter((s) => s.status !== 'done')
+  if (open.length === 0) return ''
+  const doing = plan.steps.findIndex((s) => s.status === 'doing')
+  if (doing >= 0) {
+    return `[Plan: step ${doing + 1} of ${plan.steps.length} is in progress: "${plan.steps[doing].text}". Stay on that step. When it is finished, call update_plan to mark it done and the next step doing, then carry on.]`
+  }
+  return `[Plan: ${open.length} of ${plan.steps.length} steps are not done and none is marked in progress. Call update_plan to mark the step you are working on as doing, and finished steps as done.]`
+}
+
 const MARK: Record<PlanStatus, string> = { todo: '[ ]', doing: '[>]', done: '[x]', blocked: '[!]' }
 
 /** The plan as plain text, for the model (in the system prompt and as the tool's answer). */

@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ApprovalManager } from '../src/main/agent/approvals'
+import { messageTokens } from '../src/main/agent/context'
 import { toolsForMode } from '../src/main/agent/modes'
 import { readNotes } from '../src/main/agent/notes'
 import { buildSystemPrompt } from '../src/main/agent/prompt'
@@ -14,7 +15,7 @@ import { buildToolConfig, planningTools } from '../src/main/tools/planning'
 import { ToolRegistry } from '../src/main/tools/registry'
 import { COMMANDS, matchCommands, parseCommand } from '../src/shared/commands'
 import { defaultSettings } from '../src/shared/defaults'
-import { applyPlanUpdate, planProgress, planText } from '../src/shared/plan'
+import { applyPlanUpdate, planProgress, planReminder, planText } from '../src/shared/plan'
 import type { ChatEvent, ConversationPlan, CustomToolConfig, Settings } from '../src/shared/types'
 import { makeCtx } from './helpers/ctx'
 import { type MockServer, type ScriptedTurn, startMockOpenAI } from './helpers/mockOpenAI'
@@ -71,6 +72,24 @@ describe('plan updates', () => {
     expect(text).toContain('Goal: G')
     expect(text).toContain('1. [>] a')
     expect(text).toContain('3. [x] c')
+  })
+})
+
+describe('plan reminders', () => {
+  const plan = (statuses: ('todo' | 'doing' | 'done')[]): ConversationPlan => ({ goal: 'G', steps: statuses.map((status, i) => ({ id: `s${i + 1}`, text: `Step ${i + 1}`, status })), updatedAt: 1 })
+
+  it('names the step in progress', () => {
+    expect(planReminder(plan(['done', 'doing', 'todo']))).toContain('step 2 of 3 is in progress: "Step 2"')
+  })
+
+  it('asks for a step to be marked when none is', () => {
+    expect(planReminder(plan(['done', 'todo', 'todo']))).toContain('none is marked in progress')
+  })
+
+  it('says nothing without a plan or once it is finished', () => {
+    expect(planReminder(undefined)).toBe('')
+    expect(planReminder(plan([]))).toBe('')
+    expect(planReminder(plan(['done', 'done']))).toBe('')
   })
 })
 
@@ -353,5 +372,77 @@ describe('commands in a chat', () => {
     await runner.send({ conversationId: conv.id, text: 'hello' })
     await waitEnd(conv.id)
     expect(systemOf(server!.requests[0])).toContain('Tests live in tests/.')
+  })
+})
+
+describe('keeping to the plan', () => {
+  it('reminds the model of the step it is on after it changes a file', async () => {
+    settings.agent.toolPermissions = { write_file: 'auto' }
+    const { runner, conv } = await setup([
+      { toolCalls: [{ id: 'c1', name: 'write_file', args: JSON.stringify({ path: 'a.txt', content: 'x' }) }] },
+      { text: ['ok'] },
+      { text: ['T'] }
+    ])
+    store.get(conv.id)!.plan = { goal: 'G', steps: [{ id: 's1', text: 'Write a.txt', status: 'doing' }, { id: 's2', text: 'Write b.txt', status: 'todo' }], updatedAt: 1 }
+    await runner.send({ conversationId: conv.id, text: 'go' })
+    await waitEnd(conv.id)
+    const result = store.get(conv.id)!.messages.find((m) => m.role === 'tool')!
+    expect(result.content).toContain('Created a.txt')
+    expect(result.content).toContain('[Plan: step 1 of 2 is in progress: "Write a.txt"')
+    // The model sees it in its next request.
+    expect(JSON.stringify(server!.requests[1].messages)).toContain('Stay on that step')
+  })
+
+  it('does not add reminders without a plan', async () => {
+    settings.agent.toolPermissions = { write_file: 'auto' }
+    const { runner, conv } = await setup([{ toolCalls: [{ id: 'c1', name: 'write_file', args: JSON.stringify({ path: 'a.txt', content: 'x' }) }] }, { text: ['ok'] }, { text: ['T'] }])
+    await runner.send({ conversationId: conv.id, text: 'go' })
+    await waitEnd(conv.id)
+    expect(store.get(conv.id)!.messages.find((m) => m.role === 'tool')!.content).not.toContain('[Plan')
+  })
+
+  // The token limit cut the reply in the middle of a file. Closing the JSON up would write half a file and call it done.
+  it('does not write a file whose call was cut off by the token limit', async () => {
+    settings.agent.toolPermissions = { write_file: 'auto' }
+    const { runner, conv } = await setup([
+      { toolCalls: [{ id: 'c1', name: 'write_file', args: '{"path":"big.html","content":"<html><body>half of the pa' }], finish: 'length' },
+      { text: ['I will write it in parts.'] },
+      { text: ['T'] }
+    ])
+    await runner.send({ conversationId: conv.id, text: 'build it' })
+    await waitEnd(conv.id)
+    expect(fs.existsSync(path.join(ws, 'big.html'))).toBe(false)
+    const result = store.get(conv.id)!.messages.find((m) => m.role === 'tool')!
+    expect(result.isError).toBe(true)
+    expect(result.content).toMatch(/cut off/)
+    expect(result.content).toMatch(/edit_file/)
+  })
+
+  it('still runs a complete call when the reply ended at the limit', async () => {
+    settings.agent.toolPermissions = { write_file: 'auto' }
+    const { runner, conv } = await setup([
+      { toolCalls: [{ id: 'c1', name: 'write_file', args: JSON.stringify({ path: 'ok.txt', content: 'whole' }) }], finish: 'length' },
+      { text: ['done'] },
+      { text: ['T'] }
+    ])
+    await runner.send({ conversationId: conv.id, text: 'go' })
+    await waitEnd(conv.id)
+    expect(fs.readFileSync(path.join(ws, 'ok.txt'), 'utf8')).toBe('whole')
+  })
+
+  it('does not count the text of a cut-off call, which is not sent back', () => {
+    const base = { id: 'm', role: 'assistant' as const, createdAt: 0, content: '' }
+    const cut = messageTokens({ ...base, toolCalls: [{ id: 'c', name: 'write_file', arguments: `{"path":"a","content":"${'x'.repeat(30000)}` }] })
+    const whole = messageTokens({ ...base, toolCalls: [{ id: 'c', name: 'write_file', arguments: JSON.stringify({ path: 'a', content: 'x'.repeat(30000) }) }] })
+    expect(cut).toBeLessThan(100)
+    expect(whole).toBeGreaterThan(5000)
+  })
+
+  it('asks for small steps and one at a time', () => {
+    const tool = planningTools().find((t) => t.name === 'update_plan')!
+    expect(tool.description).toMatch(/SMALL/)
+    const p = buildSystemPrompt(defaultSettings('/tmp/m'), { id: 'c', title: 't', createdAt: 0, updatedAt: 0, toolsEnabled: true, params: {}, messages: [], plan: { goal: 'G', steps: [{ id: 's1', text: 'a', status: 'doing' }], updatedAt: 1 } }, new ToolRegistry(() => defaultSettings('/tmp/m'), new McpManager(() => defaultSettings('/tmp/m'))).forRun(false), '/ws', { mode: 'build' })
+    expect(p).toContain('ONE step at a time')
+    expect(p).toContain('skeleton')
   })
 })

@@ -9,7 +9,8 @@ export function estimateTokens(text: string): number {
 
 export function messageTokens(m: ChatMessage): number {
   let n = estimateTokens(m.content ?? '') + 6
-  for (const tc of m.toolCalls ?? []) n += estimateTokens(tc.name) + estimateTokens(tc.arguments) + 8
+  // A call cut off in the middle (it does not end with a closing brace) is sent as a short stand-in, so it costs almost nothing.
+  for (const tc of m.toolCalls ?? []) n += estimateTokens(tc.name) + (tc.arguments.trimEnd().endsWith('}') ? estimateTokens(tc.arguments) : 30) + 8
   for (const a of m.attachments ?? []) {
     if (a.kind === 'image') n += IMAGE_TOKENS
     else if (a.text) n += estimateTokens(a.text)

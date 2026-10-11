@@ -18,7 +18,7 @@ export function planningTools(): ToolImpl[] {
   tools.push({
     name: 'update_plan',
     description:
-      'Write down or update the plan for the current job. Use it BEFORE writing code for anything that touches more than one or two files, and keep it current: mark a step "doing" when you start it and "done" when it is finished. Send the complete list of steps every time. Each step should name the file or area it is about. The "design" says which file is responsible for what, how the parts interact, and how it will be tested. The plan is shown to you on every request, even after the conversation is summarized.',
+      'Write down or update the plan for the current job. Use it BEFORE writing code for anything that touches more than one or two files, and keep it current: mark a step "doing" when you start it and "done" when it is finished. Send the complete list of steps every time. Each step must be SMALL: one file, or one section of a larger file, finished in one or two tool calls, and it names that file or area. Never put a whole app in one step. The "design" says which file is responsible for what, how the parts interact, and how it will be tested. The plan is shown to you on every request, even after the conversation is summarized.',
     parameters: {
       type: 'object',
       properties: {
