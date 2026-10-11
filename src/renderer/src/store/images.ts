@@ -3,7 +3,7 @@ import type { ImageGenRequest, ImageJob, ImageRecord, ImageTargetOption, LoraFil
 import { invoke, on } from '@/lib/api'
 import { subscribeOnce } from '@/lib/subscribeOnce'
 import { errorText } from '@/lib/format'
-import { DEFAULT_FORM, type HubForm, type StartMode, formAfterPatch, startModeFor } from '@/lib/imageForm'
+import { DEFAULT_FORM, type HubForm, type StartMode, clearedForm, formAfterPatch, startModeFor } from '@/lib/imageForm'
 import { type Ratio, resolveSize } from '@/lib/imageSize'
 import { pictureToPng } from '@/lib/pictureFile'
 import { useApp } from './app'
@@ -37,6 +37,10 @@ interface ImagesState {
   refreshTargets(force?: boolean): Promise<void>
   refreshAssets(): Promise<void>
   setForm(patch: Partial<HubForm>): void
+  /** Put every box in the create panel back to its default or empty (the chosen model and how many stay). */
+  clearForm(): void
+  /** Counts clears, so parts of the panel that keep their own state (the prompt's "Undo") can let go of it. */
+  formClears: number
   /** Copy a finished image's settings into the create panel. */
   reuse(rec: ImageRecord, opts?: { asInit?: boolean }): void
   /** Bring a picture from a file, the clipboard or a drop in as the starting image. */
@@ -74,6 +78,7 @@ export const useImages = create<ImagesState>()((set, get) => ({
   loraFiles: [],
   upscalers: [],
   form: DEFAULT_FORM,
+  formClears: 0,
   viewing: null,
   siblings: [],
   editJobId: null,
@@ -126,6 +131,10 @@ export const useImages = create<ImagesState>()((set, get) => ({
       // The pictures made from the old base belong to it too.
       return { form, ...(newBase ? { editJobId: null } : {}) }
     })
+  },
+
+  clearForm() {
+    set((s) => ({ form: clearedForm(s.form), editJobId: null, formClears: s.formClears + 1 }))
   },
 
   reuse(rec, opts) {

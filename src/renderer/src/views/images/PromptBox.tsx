@@ -1,5 +1,5 @@
 import { Sparkles, Tags, Undo2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AliasManager } from '@/components/AliasManager'
 import { Button } from '@/components/ui'
 import { invoke } from '@/lib/api'
@@ -14,9 +14,13 @@ export function PromptBox({ rows = 4, placeholder, onSubmit, autoFocus }: { rows
   const toast = useApp((s) => s.toast)
   const prompt = useImages((s) => s.form.prompt)
   const setForm = useImages((s) => s.setForm)
+  const clears = useImages((s) => s.formClears)
   const [enhancing, setEnhancing] = useState(false)
   const [before, setBefore] = useState<string | null>(null)
   const [aliasesOpen, setAliasesOpen] = useState(false)
+
+  // Clearing the panel starts over: there is nothing left to undo.
+  useEffect(() => setBefore(null), [clears])
 
   // Aliases the user typed, shown as they will be sent.
   const expanded = useMemo(() => expandAliases(prompt, settings.image.aliases), [prompt, settings.image.aliases])
@@ -26,10 +30,12 @@ export function PromptBox({ rows = 4, placeholder, onSubmit, autoFocus }: { rows
     if (!p) return
     setEnhancing(true)
     try {
-      const out = await invoke('chat:enhance', p)
-      if (out && out.trim()) {
+      const out = (await invoke('chat:enhance', p)).trim()
+      // Only offer "Undo" for a rewrite that really changed the prompt.
+      if (!out || out === p) toast('error', 'The model did not change the prompt. Try again, or pick another model in the chat composer.')
+      else {
         setBefore(prompt)
-        setForm({ prompt: out.trim() })
+        setForm({ prompt: out })
       }
     } catch (e) {
       toast('error', errorText(e))
