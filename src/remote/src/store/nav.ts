@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 export type Tab = 'chats' | 'pictures' | 'you'
 /** Screens that open on top of a tab. The phone's Back button closes the top one. */
-export type Layer = 'chat' | 'viewer' | 'create' | 'models' | 'chatMenu'
+export type Layer = 'chat' | 'viewer' | 'create' | 'paint' | 'models' | 'chatMenu'
 
 interface NavState {
   tab: Tab

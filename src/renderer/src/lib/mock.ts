@@ -318,6 +318,7 @@ const targets: ImageTargetOption[] = emptyScenario && onboarding
   ? []
   : [
       { backendId: 'builtin', backendName: 'Built-in (stable-diffusion.cpp)', kind: 'builtin', model: 'sd_demo', label: 'SDXL Turbo', supportsImg2Img: true, supportsMask: true, supportsNegative: true, supportsLora: true, defaults: { width: 512, height: 512, steps: 4, cfg: 1, sampler: 'euler_a' }, arch: 'sdxl', vaeTiling: false, available: true },
+      { backendId: 'builtin', backendName: 'Built-in (stable-diffusion.cpp)', kind: 'builtin', model: 'sd_demo_inpaint', label: 'SD 1.5 Inpainting', supportsImg2Img: true, supportsMask: true, supportsNegative: true, supportsLora: true, defaults: { width: 512, height: 512, steps: 30, cfg: 7, sampler: 'euler_a' }, arch: 'sd', vaeTiling: false, inpaint: true, available: true },
       { backendId: 'builtin', backendName: 'Built-in (stable-diffusion.cpp)', kind: 'builtin', model: 'sd_demo_15', label: 'Dreamshaper 8 (SD 1.5)', supportsImg2Img: true, supportsMask: true, supportsNegative: true, supportsLora: true, defaults: { width: 512, height: 512, steps: 25, cfg: 7, sampler: 'euler_a' }, arch: 'sd', vaeTiling: false, available: true },
       { backendId: 'comfy', backendName: 'ComfyUI', kind: 'comfyui', model: 'sd_xl_base_1.0.safetensors', label: 'sd_xl_base_1.0', supportsImg2Img: false, supportsNegative: true, available: false, unavailableReason: 'Cannot reach ComfyUI at http://127.0.0.1:8188. Is it running?' }
     ]

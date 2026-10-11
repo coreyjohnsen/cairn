@@ -401,6 +401,8 @@ export interface SdModelConfig {
   clipOnCpu: boolean
   flashAttn: boolean
   extraArgs: string
+  /** An inpainting checkpoint: trained to fill in a painted part so it matches the rest. Offered when painting a mask. */
+  inpaint?: boolean
 }
 
 /** A LoRA file in the LoRA folder. */
@@ -594,6 +596,8 @@ export interface ImageTargetOption {
   /** Built-in engine models: what kind of model it is, and whether decoding is done in tiles. */
   arch?: SdArch
   vaeTiling?: boolean
+  /** Built-in engine: an inpainting checkpoint (set in Models, Image models). */
+  inpaint?: boolean
   available: boolean
   unavailableReason?: string
 }

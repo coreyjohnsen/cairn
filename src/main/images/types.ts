@@ -43,6 +43,7 @@ export interface BackendModel {
   /** Built-in engine models only. */
   arch?: SdArch
   vaeTiling?: boolean
+  inpaint?: boolean
 }
 
 export interface ImageBackend {

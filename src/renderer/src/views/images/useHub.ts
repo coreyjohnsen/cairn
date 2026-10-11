@@ -30,23 +30,28 @@ export function useHub() {
     targets.find((t) => t.available) ??
     targets[0]
   const ready = !!target?.available
+  // Inpainting models the person has set up, offered when a mask is painted.
+  const inpaintTargets = targets.filter((t) => t.inpaint && t.supportsMask && t.available)
 
   const mode = form.startMode
   const editing = mode === 'edit'
   const pic = form.initImageId ? records.find((r) => r.id === form.initImageId) : undefined
-  const imageOk = !!target?.supportsImg2Img
-  const maskOk = imageOk && !!target?.supportsMask
+  // With paint on the picture, the chosen inpainting model (if any) draws it instead of the model chosen for the picture.
+  const inpaintTarget = form.inpaintTargetKey ? inpaintTargets.find((t) => targetKeyOf(t) === form.inpaintTargetKey) : undefined
+  const genTarget = editing && !!form.mask && !!pic && inpaintTarget ? inpaintTarget : target
+  const imageOk = !!genTarget?.supportsImg2Img
+  const maskOk = imageOk && !!genTarget?.supportsMask
   const init = editing ? pic : undefined
   const img2img = !!init && imageOk
   const like = init ? { width: init.width, height: init.height } : undefined
-  const unsupportedHint = target && !imageOk ? `${target.backendName} cannot start from a picture. Choose a built-in or AUTOMATIC1111 model.` : undefined
+  const unsupportedHint = genTarget && !imageOk ? `${genTarget.backendName} cannot start from a picture. Choose a built-in or AUTOMATIC1111 model.` : undefined
 
-  const d = target?.defaults
-  const size0 = resolveSize(form, target, like)
+  const d = genTarget?.defaults
+  const size0 = resolveSize(form, genTarget, like)
   const negative = form.negative ?? settings.image.negativePrompt
 
   // Steps and guidance the user saved for this model come first, then the model's own.
-  const modelKey = target ? targetKeyOf(target) : ''
+  const modelKey = genTarget ? targetKeyOf(genTarget) : ''
   const saved = settings.image.modelDefaults?.[modelKey]
   const stepsDefault = saved?.steps ?? d?.steps
   const cfgDefault = saved?.cfg ?? d?.cfg
@@ -55,7 +60,7 @@ export function useHub() {
   const defUp = settings.image.upscaleByDefault !== false ? defaultUpscaler(upscalers) : undefined
   const upscaleValue = form.upscale ?? (form.upscaleOff || !defUp ? undefined : { path: defUp.path, repeats: 1 })
   const upscaleIsDefault = !form.upscale && !!upscaleValue
-  const usable = usableUpscalers(target, upscalers)
+  const usable = usableUpscalers(genTarget, upscalers)
   const chosenUpscaler = usable.find((u) => u.path === upscaleValue?.path)
 
   // Why Generate cannot be pressed yet, in words.
@@ -78,17 +83,17 @@ export function useHub() {
   )
 
   const submit = async (): Promise<string | null> => {
-    if (!target || blocked) return null
+    if (!genTarget || blocked) return null
     // The painting canvas saves its mask a moment after the last stroke; make sure that has happened.
     await useImages.getState().maskFlush?.()
     const f = useImages.getState().form
     const prompt = f.prompt.trim()
-    const size = resolveSize(f, target, img2img ? like : undefined)
+    const size = resolveSize(f, genTarget, img2img ? like : undefined)
     // A mask is sent first and the request then points at it, so the picture-sized data does not travel with the job.
     let inpaint: ImageGenRequest['inpaint']
     if (img2img && f.mask) {
       if (!maskOk) {
-        toast('error', `${target.backendName} cannot use a mask. Choose a built-in or AUTOMATIC1111 model, or clear the paint.`)
+        toast('error', `${genTarget.backendName} cannot use a mask. Choose a built-in or AUTOMATIC1111 model, or clear the paint.`)
         return null
       }
       try {
@@ -101,8 +106,8 @@ export function useHub() {
     }
     const id = await generate({
       prompt,
-      negativePrompt: target.supportsNegative && negative.trim() ? negative.trim() : undefined,
-      target: { backendId: target.backendId, model: target.model },
+      negativePrompt: genTarget.supportsNegative && negative.trim() ? negative.trim() : undefined,
+      target: { backendId: genTarget.backendId, model: genTarget.model },
       width: size.width,
       height: size.height,
       steps: f.steps,
@@ -113,8 +118,8 @@ export function useHub() {
       initImageId: img2img ? f.initImageId : undefined,
       strength: img2img ? f.strength : undefined,
       inpaint,
-      loras: target.supportsLora && f.loras.length ? f.loras : undefined,
-      upscale: upscaleValue && (target.supportsLora || upscalers.find((u) => u.path === upscaleValue.path)?.engine === 'esrgan') ? upscaleValue : undefined
+      loras: genTarget.supportsLora && f.loras.length ? f.loras : undefined,
+      upscale: upscaleValue && (genTarget.supportsLora || upscalers.find((u) => u.path === upscaleValue.path)?.engine === 'esrgan') ? upscaleValue : undefined
     })
     // A picture made from the editor shows up in the editor, next to the one it started from.
     if (id && img2img) useImages.getState().setEditJob(id)
@@ -122,7 +127,7 @@ export function useHub() {
   }
 
   return {
-    settings, form, target, ready, mode, editing, pic, init, imageOk, maskOk, img2img, like, unsupportedHint, d, size0, negative,
+    settings, form, target, genTarget, inpaintTargets, ready, mode, editing, pic, init, imageOk, maskOk, img2img, like, unsupportedHint, d, size0, negative,
     saved, stepsDefault, cfgDefault, upscaleValue, upscaleIsDefault, usable, chosenUpscaler, blocked, busyJobs, submit
   }
 }
