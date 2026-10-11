@@ -1,5 +1,5 @@
 import { AlertCircle, Brain, ChevronRight, Copy, FileText, Info, Pencil, RotateCcw, Scissors } from 'lucide-react'
-import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Attachment, ChatMessage, Compaction, Conversation, ImageRef, ToolProgress } from '@shared/types'
 import { mediaUrl } from '@/lib/api'
 import { cx, formatBytes, formatDuration } from '@/lib/format'
@@ -93,6 +93,8 @@ function AttachmentChips({ items }: { items: Attachment[] }) {
 function Reasoning({ text, streaming }: { text: string; streaming: boolean }) {
   const [open, setOpen] = useState(false)
   const shown = open || (streaming && !!text)
+  // Thoughts can run long and grow on every frame while they stream: the formatted text may trail a moment behind so the screen keeps up.
+  const formatted = useDeferredValue(text)
   return (
     <div className={cx('reasoning', shown && 'open')}>
       <button type="button" className="reasoning-head" onClick={() => setOpen((o) => !o)} aria-expanded={shown}>
@@ -100,7 +102,11 @@ function Reasoning({ text, streaming }: { text: string; streaming: boolean }) {
         <span>{streaming ? 'Thinking…' : 'Reasoning'}</span>
         <ChevronRight size={14} className="chev" />
       </button>
-      {shown && <div className="reasoning-body selectable">{text}</div>}
+      {shown && (
+        <div className="reasoning-body">
+          <Markdown text={formatted} />
+        </div>
+      )}
     </div>
   )
 }

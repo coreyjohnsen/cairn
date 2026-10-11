@@ -463,10 +463,40 @@
   margin-top: 6px;
   max-height: 300px;
   overflow: auto;
-  white-space: pre-wrap;
   color: var(--fg-dim);
   font-size: 0.9rem;
   line-height: 1.55;
+}
+/* Formatted like a reply, but quieter: smaller headings, tighter spacing. */
+.reasoning-body .markdown {
+  line-height: 1.55;
+}
+/* Models use a single line break to separate one thought from the next, so keep it. */
+.reasoning-body .markdown p {
+  margin: 0 0 0.6em;
+  white-space: pre-line;
+}
+.reasoning-body .markdown h1,
+.reasoning-body .markdown h2,
+.reasoning-body .markdown h3,
+.reasoning-body .markdown h4 {
+  margin: 0.9em 0 0.35em;
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--fg);
+}
+.reasoning-body .markdown ul,
+.reasoning-body .markdown ol {
+  margin-bottom: 0.6em;
+}
+.reasoning-body .markdown strong {
+  color: var(--fg);
+}
+.reasoning-body .code-block {
+  margin-bottom: 0.6em;
+}
+.reasoning-body .code-block pre {
+  font-size: 0.82rem;
 }
 
 /* ───────── Markdown ───────── */
