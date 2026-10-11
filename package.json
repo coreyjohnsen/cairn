@@ -19,7 +19,8 @@
     "pretest": "node scripts/check-node.cjs",
     "dev": "electron-vite dev",
     "start": "electron-vite preview",
-    "build": "electron-vite build",
+    "build": "electron-vite build && vite build --config vite.remote.config.ts",
+    "build:remote": "vite build --config vite.remote.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "icons": "node scripts/make-icons.mjs",
@@ -28,11 +29,13 @@
     "dist:win": "npm run build && electron-builder --win",
     "dist:linux": "npm run build && electron-builder --linux",
     "dist:all": "npm run build && electron-builder --win --linux",
-    "dev:web": "vite --config vite.web.config.ts"
+    "dev:web": "vite --config vite.web.config.ts",
+    "dev:remote": "vite --config vite.remote.config.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
     "katex": "^0.19.0",
+    "qrcode-generator": "^2.0.4",
     "rehype-katex": "^7.0.1",
     "remark-math": "^6.0.0",
     "tar": "^7.5.22",
@@ -49,6 +52,7 @@
     "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "jsqr": "^1.4.0",
     "lucide-react": "^1.50.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

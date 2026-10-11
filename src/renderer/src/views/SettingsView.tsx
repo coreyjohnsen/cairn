@@ -151,6 +151,14 @@ function Chat() {
             <Field row label="Tool output limit" hint="Longest tool result sent back to the model, in characters. 0 means no limit: files, pages and command output are sent whole. Very long results use up the model's memory quickly.">
               <NumberField value={c.toolOutputLimit} min={0} step={1000} onCommit={(v) => set({ toolOutputLimit: v })} />
             </Field>
+            <Field row label="Summarize when memory fills" hint="In a long chat or task, the older steps are replaced by a summary (what was asked, a list of the tool calls, what was found) instead of being dropped. Everything stays visible in the chat. Needs a model whose memory size Cairn knows.">
+              <Switch checked={c.autoCompact !== false} onChange={(v) => set({ autoCompact: v })} />
+            </Field>
+            {c.autoCompact !== false && (
+              <Field row label="Summarize at" hint="How full the model's memory may get before the older steps are summarized. Lower leaves more room for the next tool results.">
+                <Slider value={c.compactAt ?? 75} min={40} max={95} step={5} onChange={(v) => set({ compactAt: v })} format={(v) => `${v}%`} />
+              </Field>
+            )}
             <Field row label="Memory budget" hint="Older messages are trimmed to stay under this many tokens. 0 chooses automatically.">
               <NumberField value={c.contextBudget} min={0} max={2000000} step={1024} onCommit={(v) => set({ contextBudget: v })} />
             </Field>

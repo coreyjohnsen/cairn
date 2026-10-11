@@ -118,7 +118,7 @@
   flex: none;
   height: var(--topbar-h);
   /* Leave room for the Windows caption buttons. */
-  padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  padding-right: var(--caption-w);
 }
 .view {
   flex: 1;
@@ -138,7 +138,8 @@
   padding: 6px 40px 60px;
 }
 .page-inner {
-  max-width: 980px;
+  /* Grows with the window, so a large screen is not left mostly empty. */
+  max-width: clamp(980px, calc(100vw - var(--rail-w) - 320px), 1440px);
   margin: 0 auto;
   /* Always paint content above the decorative backdrop. */
   position: relative;
@@ -274,4 +275,53 @@
   -webkit-mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent), linear-gradient(to bottom, #000 40%, transparent 100%);
   mask-composite: intersect;
   -webkit-mask-composite: source-in;
+}
+
+/* ───────── Resizable side panels ───────── */
+.resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 6;
+  width: 11px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.resizer-right {
+  right: -6px;
+}
+.resizer-left {
+  left: -6px;
+}
+.resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 3px;
+  border-radius: 3px;
+  background: transparent;
+  transition: background var(--t-fast) 120ms;
+}
+.resizer:hover::after,
+.resizer:focus-visible::after {
+  background: var(--accent-line);
+}
+.resizer.dragging::after {
+  background: var(--accent);
+  transition-delay: 0ms;
+}
+:root.is-resizing,
+:root.is-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+/* A side panel the person has folded away keeps its place in the grid at zero width. */
+.is-folded {
+  visibility: hidden;
+  overflow: hidden;
+  border: 0 !important;
 }

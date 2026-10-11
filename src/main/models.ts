@@ -1,3 +1,4 @@
+import { runtimeFor } from '@shared/runtimePrefs'
 import type { DetectedServer, ModelOption, ProviderConfig, ProviderModel, Settings } from '@shared/types'
 import { LOCAL_PROVIDER_ID, PROVIDER_PRESETS } from '@shared/defaults'
 import { makeModelRef, parseModelRef } from '@shared/types'
@@ -102,7 +103,7 @@ export class ModelService implements ModelResolver {
       const caps = mergeCaps(inferCaps(parsed.modelId, cfg.kind === 'anthropic' ? 'anthropic' : 'openai'), cfg.capOverrides[parsed.modelId])
       option = { ref: ref!, providerId: cfg.id, providerName: cfg.name, id: parsed.modelId, name: prettyModelName(parsed.modelId), caps }
     }
-    const contextTokens = cfg.id === LOCAL_PROVIDER_ID ? settings.local.contextSize || undefined : undefined
+    const contextTokens = cfg.id === LOCAL_PROVIDER_ID ? runtimeFor(settings.local, parsed.modelId).contextSize || undefined : undefined
     return { option, provider: this.providerFor(cfg), contextTokens }
   }
 

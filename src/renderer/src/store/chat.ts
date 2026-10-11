@@ -32,6 +32,9 @@ interface ChatState {
   stop(): void
   regenerate(): Promise<void>
   truncateFrom(messageId: string): Promise<void>
+  /** Summarize the older part of the open chat now, or go back to sending the model all of it. */
+  compact(): Promise<void>
+  uncompact(): Promise<void>
   approve(a: ApprovalRequest, d: ApprovalDecision): void
   handle(e: ChatEvent): void
 }
@@ -85,7 +88,26 @@ export const useChat = create<ChatState>()((set, get) => {
     async init() {
       on('chat:event', (e) => get().handle(e))
       on('conversations:changed', (summary) => {
-        set((s) => ({ list: sortList([summary, ...s.list.filter((c) => c.id !== summary.id)]) }))
+        const s = get()
+        const cached = s.cache[summary.id]
+        // Another window (or a paired phone) cut messages off this chat: read it again instead of showing what is gone.
+        const stale = !!cached && !s.running[summary.id] && cached.messages.filter((m) => m.role !== 'tool').length !== summary.messageCount
+        set((st) => ({
+          list: sortList([summary, ...st.list.filter((c) => c.id !== summary.id)]),
+          cache: cached && !stale ? { ...st.cache, [summary.id]: { ...cached, title: summary.title, pinned: summary.pinned } } : st.cache
+        }))
+        if (stale) {
+          invoke('conversations:get', summary.id)
+            .then((conv) => conv && set((st) => ({ cache: { ...st.cache, [summary.id]: conv } })))
+            .catch(() => {})
+        }
+      })
+      on('conversations:removed', (id) => {
+        set((s) => {
+          const { [id]: _gone, ...cache } = s.cache
+          const list = s.list.filter((c) => c.id !== id)
+          return { cache, list, activeId: s.activeId === id ? null : s.activeId }
+        })
       })
       const [list, active] = await Promise.all([invoke('conversations:list'), invoke('chat:active')])
       set({ list: sortList(list), running: Object.fromEntries(active.map((id) => [id, true])) })
@@ -199,6 +221,26 @@ export const useChat = create<ChatState>()((set, get) => {
       }
     },
 
+    async compact() {
+      const id = get().activeId
+      if (!id) return
+      try {
+        await invoke('chat:compact', id)
+      } catch (e) {
+        useApp.getState().toast('error', errorText(e))
+      }
+    },
+
+    async uncompact() {
+      const id = get().activeId
+      if (!id) return
+      try {
+        await invoke('chat:uncompact', id)
+      } catch (e) {
+        useApp.getState().toast('error', errorText(e))
+      }
+    },
+
     approve(a, d) {
       void invoke('chat:approve', a.id, d)
       set((s) => {
@@ -253,6 +295,12 @@ export const useChat = create<ChatState>()((set, get) => {
           break
         case 'status':
           set((s) => ({ status: { ...s.status, [e.conversationId]: e.status } }))
+          break
+        case 'context':
+          set((s) => (s.cache[e.conversationId] ? { cache: { ...s.cache, [e.conversationId]: { ...s.cache[e.conversationId], contextUsage: e.usage } } } : {}))
+          break
+        case 'compaction':
+          set((s) => (s.cache[e.conversationId] ? { cache: { ...s.cache, [e.conversationId]: { ...s.cache[e.conversationId], compaction: e.compaction } } } : {}))
           break
         case 'title':
           set((s) => ({

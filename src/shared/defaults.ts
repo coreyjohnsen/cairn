@@ -3,6 +3,7 @@ import type {
   ProviderConfig,
   ProviderKind,
   SdModelConfig,
+  RemoteSettings,
   ServerSettings,
   Settings,
   ToolPermission
@@ -168,6 +169,12 @@ export const BUILTIN_TOOL_DEFAULTS: Record<string, ToolPermission> = {
   generate_image: 'auto'
 }
 
+export const REMOTE_DEFAULT_PORT = 8742
+
+export function defaultRemoteSettings(): RemoteSettings {
+  return { enabled: false, port: REMOTE_DEFAULT_PORT, publicUrl: '', keepAwake: false }
+}
+
 export function defaultServerSettings(): ServerSettings {
   return { enabled: false, access: 'local', port: 8321, requireKey: true, apiKey: '', allowedOrigins: [], exposeAll: true, chatModels: [], imageModels: [] }
 }
@@ -190,6 +197,8 @@ export function defaultSettings(modelsDir: string): Settings {
       detectImageIntent: true,
       sendOnEnter: true,
       contextBudget: 0,
+      autoCompact: true,
+      compactAt: 75,
       thinking: 'auto'
     },
     agent: {
@@ -214,6 +223,10 @@ export function defaultSettings(modelsDir: string): Settings {
       threads: 0,
       port: 0,
       flashAttn: 'auto',
+      kvCache: 'f16',
+      nCpuMoe: 0,
+      kvInRam: false,
+      modelOverrides: {},
       extraArgs: '',
       idleUnloadMinutes: 0,
       lastModelPath: '',
@@ -231,6 +244,7 @@ export function defaultSettings(modelsDir: string): Settings {
       negativePrompt: 'blurry, low quality, deformed, watermark, text'
     },
     server: defaultServerSettings(),
+    remote: defaultRemoteSettings(),
     paths: {
       modelsDir,
       extraModelDirs: [],

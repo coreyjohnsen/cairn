@@ -212,7 +212,8 @@ export class OpenAIProvider implements Provider {
           type: 'usage',
           promptTokens: usage?.prompt_tokens ?? timings?.prompt_n,
           completionTokens: usage?.completion_tokens ?? timings?.predicted_n,
-          tokensPerSecond: typeof timings?.predicted_per_second === 'number' ? timings.predicted_per_second : undefined
+          tokensPerSecond: typeof timings?.predicted_per_second === 'number' ? timings.predicted_per_second : undefined,
+          promptTokensPerSecond: typeof timings?.prompt_per_second === 'number' ? timings.prompt_per_second : undefined
         }
       }
     }

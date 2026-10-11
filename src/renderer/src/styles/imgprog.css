@@ -1,0 +1,74 @@
+/* ───────── Image progress (stage trail, clock, hint) ───────── */
+.imgprog {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+.imgprog-trail {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.imgprog-trail li {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 0.72rem;
+  color: var(--fg-faint);
+}
+.imgprog-dot {
+  display: block;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--bg-4);
+  transition: background var(--t-fast);
+}
+.imgprog-trail li.done {
+  color: var(--fg-dim);
+}
+.imgprog-trail li.done .imgprog-dot {
+  background: color-mix(in srgb, var(--accent) 55%, var(--bg-4));
+}
+.imgprog-trail li.now {
+  color: var(--accent);
+  font-weight: 600;
+}
+.imgprog-trail li.now .imgprog-dot {
+  background: var(--accent);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.imgprog-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.imgprog.compact .imgprog-name {
+  display: none;
+}
+.imgprog.compact .imgprog-trail li {
+  gap: 0;
+}
+.imgprog-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.imgprog-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.imgprog-clock {
+  flex: none;
+}
+.imgprog-hint {
+  line-height: 1.4;
+}

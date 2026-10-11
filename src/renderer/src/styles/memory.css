@@ -1,0 +1,221 @@
+/* The memory planner: what fits in video memory and RAM, and how to place a model. */
+
+.mp {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.mp h4 {
+  margin: 0 0 4px;
+  font-size: 0.92rem;
+}
+.mp-facts {
+  margin-top: -6px;
+}
+.mp-hw {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  color: var(--fg-dim);
+  font-size: 0.88rem;
+}
+.mp-hw span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.mp-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.mp-verdict {
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mp-verdict.t-ok {
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ok) 9%, var(--bg-2));
+}
+.mp-verdict.t-info {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+.mp-verdict.t-warn {
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 9%, var(--bg-2));
+}
+.mp-verdict.t-danger {
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+  background: var(--danger-soft);
+}
+.mp-headline {
+  font-weight: 650;
+}
+.mp-speed {
+  color: var(--fg-dim);
+  font-size: 0.9rem;
+}
+
+.mp-meters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+.mp-meter-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+.mp-over {
+  color: var(--danger);
+}
+.mp-bar {
+  position: relative;
+  display: flex;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--bg-4);
+  overflow: hidden;
+}
+.mp-seg {
+  height: 100%;
+  min-width: 0;
+}
+.mp-seg.a,
+.mp-dot.a {
+  background: var(--accent);
+}
+.mp-seg.b,
+.mp-dot.b {
+  background: var(--accent-2);
+}
+.mp-seg.c,
+.mp-dot.c {
+  background: var(--fg-faint);
+}
+.mp-limit {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--fg);
+  opacity: 0.7;
+}
+.mp-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 6px;
+  font-size: 0.78rem;
+  color: var(--fg-dim);
+}
+.mp-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  border-radius: 50%;
+}
+.mp-notes {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--fg-dim);
+  font-size: 0.86rem;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.mp-warn {
+  margin: 0;
+  color: var(--warn);
+}
+.mp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mp-sub {
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+.mp-ladder {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.mp-ladder-row {
+  display: grid;
+  grid-template-columns: 84px repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  align-items: stretch;
+}
+.mp-ladder-row.head {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.mp-ladder-row > span:first-child {
+  display: flex;
+  align-items: center;
+}
+.mp-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 9px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  text-align: left;
+  font-size: 0.82rem;
+}
+.mp-cell:hover {
+  border-color: var(--line-strong);
+}
+.mp-cell.on {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.mp-cell.t-ok {
+  background: color-mix(in srgb, var(--ok) 10%, var(--bg-2));
+}
+.mp-cell.t-info {
+  background: var(--accent-soft);
+}
+.mp-cell.t-warn {
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg-2));
+}
+.mp-cell.t-danger {
+  color: var(--fg-faint);
+  background: var(--bg-1);
+}
+.mp-report {
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+.mp-report p {
+  margin: 0;
+}
+@media (max-width: 760px) {
+  .mp-ladder-row {
+    grid-template-columns: 64px repeat(3, minmax(0, 1fr));
+  }
+}

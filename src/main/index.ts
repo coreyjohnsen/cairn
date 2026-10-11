@@ -1,6 +1,6 @@
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { BrowserWindow, Menu, app, clipboard, dialog, ipcMain, nativeImage, protocol, safeStorage, shell } from 'electron'
+import { BrowserWindow, Menu, app, clipboard, dialog, ipcMain, nativeImage, powerSaveBlocker, protocol, safeStorage, shell } from 'electron'
 import type { IpcMainInvokeEvent, MenuItemConstructorOptions } from 'electron'
 import { INVOKE_CHANNELS } from '../shared/ipc'
 import { setEventSink } from './events'
@@ -233,7 +233,17 @@ async function boot(): Promise<void> {
   app.setAppUserModelId('app.cairn.desktop')
 
   setEventSink((channel, payload) => broadcast(channel, payload))
-  services = await createServices({ dataDir, cipher: makeCipher(), makeThumb, prepareImage })
+  services = await createServices({
+    dataDir,
+    cipher: makeCipher(),
+    makeThumb,
+    prepareImage,
+    appVersion: app.getVersion(),
+    // The phone companion web app is built next to the interface (out/remote).
+    remoteClientDir: path.join(__dirname, '../remote'),
+    // Keeps the computer awake (the screen may still turn off) while phones can connect.
+    keepAwake: { start: () => powerSaveBlocker.start('prevent-app-suspension'), stop: (id) => powerSaveBlocker.stop(id) }
+  })
   const handlers: Handlers = buildHandlers(services, platformApi())
 
   for (const channel of INVOKE_CHANNELS) {

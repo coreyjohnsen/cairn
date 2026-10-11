@@ -1,10 +1,12 @@
-import { Download, MoreHorizontal, Pencil, Pin, PinOff, Search, SquarePen, Trash2, X } from 'lucide-react'
+import { Download, MoreHorizontal, PanelLeftClose, Pencil, Pin, PinOff, Search, SquarePen, Trash2, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { ConversationSummary } from '@shared/types'
 import { invoke } from '@/lib/api'
 import { cx, dayBucket, errorText } from '@/lib/format'
 import { useApp } from '@/store/app'
 import { useChat } from '@/store/chat'
+import { useLayout, usePanel } from '@/store/layout'
+import { Resizer } from './Resizer'
 import { Button, IconButton, MenuItem, MenuSeparator, Modal, Popover } from './ui'
 
 function Row({ c, active, running, onAskDelete }: { c: ConversationSummary; active: boolean; running: boolean; onAskDelete: (c: ConversationSummary) => void }) {
@@ -115,6 +117,8 @@ export function ConversationPanel() {
   const newChat = useChat((s) => s.newChat)
   const remove = useChat((s) => s.remove)
   const [doomed, setDoomed] = useState<ConversationSummary | null>(null)
+  const { collapsed } = usePanel('conversations')
+  const toggle = useLayout((s) => s.toggle)
 
   const shown = results ?? list
   const groups = useMemo(() => {
@@ -129,12 +133,17 @@ export function ConversationPanel() {
   }, [shown])
 
   return (
-    <aside className="conv-panel">
+    <aside className={cx('conv-panel', collapsed && 'is-folded')} aria-hidden={collapsed}>
       <div className="conv-top">
         <h2>Chats</h2>
-        <IconButton label="New chat" onClick={() => newChat()}>
-          <SquarePen size={17} />
-        </IconButton>
+        <div className="row" style={{ gap: 2 }}>
+          <IconButton label="New chat" onClick={() => newChat()}>
+            <SquarePen size={17} />
+          </IconButton>
+          <IconButton label="Hide the chat list (Ctrl+B)" onClick={() => toggle('conversations')}>
+            <PanelLeftClose size={17} />
+          </IconButton>
+        </div>
       </div>
       <div className="conv-search">
         <Search size={14} />
@@ -182,6 +191,7 @@ export function ConversationPanel() {
           “{doomed?.title}” and its messages will be removed from this computer. Images it made stay in the Image Hub.
         </p>
       </Modal>
+      {!collapsed && <Resizer panel="conversations" side="right" />}
     </aside>
   )
 }

@@ -155,6 +155,53 @@ export interface ImageTarget {
   model: string
 }
 
+/** One line of the record of what the assistant did with tools, kept after the messages themselves are summarized away. */
+export interface LedgerEntry {
+  /** read file, wrote or edited a file, ran a command, searched, used the web, anything else, was declined by the user */
+  k: 'read' | 'wrote' | 'cmd' | 'find' | 'web' | 'misc' | 'denied'
+  /** The file, command, search or call this is about. */
+  t: string
+  /** How many times it happened. */
+  n: number
+  /** Outcome, such as "exit 1", "failed" or "lines 1-200". */
+  note?: string
+}
+
+/**
+ * What stands in for the older part of a long chat once it has been summarized, so the model's memory does not fill up.
+ * The messages themselves are kept and shown; only what the model is sent changes.
+ */
+export interface Compaction {
+  /** The model's own account of the goal, what is done, what was learned and what is next. Empty when it could not write one. */
+  narrative: string
+  /** What was asked of the assistant lately, word for word (shortened). */
+  asks: string[]
+  /** Every tool call made, listed from the messages rather than written by the model, so it cannot be wrong or forgotten. */
+  ledger: LedgerEntry[]
+  /** Messages up to and including this one are replaced by the summary. */
+  upToMessageId: string
+  /** How much it stands in for, over every time the chat was summarized. */
+  messages: number
+  toolCalls: number
+  /** Rough size of the model's view of the chat before and after, in tokens. */
+  tokensBefore: number
+  tokensAfter: number
+  createdAt: number
+  /** `model` when the model wrote the narrative; `ledger` when only the list of tool calls could be kept. */
+  source: 'model' | 'ledger'
+  /** How many times the summary has been rolled forward. */
+  rounds: number
+}
+
+/** How full the model's memory was at its last request. */
+export interface ContextUsage {
+  /** Tokens in the request, as the server counted them when it said, otherwise estimated. */
+  used: number
+  /** The model's context size. */
+  window: number
+  at: number
+}
+
 export interface Conversation {
   id: string
   title: string
@@ -169,6 +216,9 @@ export interface Conversation {
   imageTarget?: ImageTarget
   params: ConversationParams
   messages: ChatMessage[]
+  /** Set once the older part of the chat has been summarized for the model. */
+  compaction?: Compaction
+  contextUsage?: ContextUsage
 }
 
 export interface ConversationSummary {
@@ -226,6 +276,8 @@ export type ChatEvent =
   | { type: 'approval-resolved'; runId: string; conversationId: string; approvalId: string }
   | { type: 'status'; runId: string; conversationId: string; status: string }
   | { type: 'title'; conversationId: string; title: string }
+  | { type: 'context'; conversationId: string; usage: ContextUsage }
+  | { type: 'compaction'; conversationId: string; compaction?: Compaction }
   | { type: 'run-end'; runId: string; conversationId: string; outcome: 'done' | 'aborted' | 'error'; error?: string }
 
 export interface SendRequest {
@@ -234,6 +286,8 @@ export interface SendRequest {
   attachments?: AttachmentInput[]
   /** 'image' sends the text straight to the image generator. */
   mode?: 'chat' | 'image'
+  /** Run this reply without tools, whatever the chat says. Set by the host for phones that may not use tools. */
+  noTools?: boolean
 }
 
 /* ───────────────────────────── Tools ───────────────────────────── */
@@ -609,6 +663,14 @@ export interface LocalRuntimeSettings {
   threads: number
   port: number
   flashAttn: 'auto' | 'on' | 'off'
+  /** How the model's working memory (the KV cache) is stored. 8-bit takes about half the video memory of 16-bit, so twice the context fits. Needs flash attention. */
+  kvCache: 'f16' | 'q8_0' | 'q4_0'
+  /** Mixture-of-experts models: keep the expert weights of this many of the first layers in RAM, the rest on the GPU. 0 = none. */
+  nCpuMoe: number
+  /** Keep the model's working memory (the KV cache) in RAM instead of video memory. Slower, but lets a much longer context fit. */
+  kvInRam: boolean
+  /** Settings chosen for one model (by the memory planner), keyed by file path. They replace the ones above for that model only. */
+  modelOverrides: Record<string, ModelRuntimeOverride>
   extraArgs: string
   /** Stop the server after this many idle minutes (0 = never). */
   idleUnloadMinutes: number
@@ -618,10 +680,96 @@ export interface LocalRuntimeSettings {
   modelNames: Record<string, string>
 }
 
+/** What the planner saved for one model. Anything left out follows the general runtime settings. */
+export interface ModelRuntimeOverride {
+  contextSize?: number
+  gpuLayers?: number
+  kvCache?: 'f16' | 'q8_0' | 'q4_0'
+  nCpuMoe?: number
+  kvInRam?: boolean
+}
+
+/** Where the engine actually put the model, read from its own start-up report (in MB). */
+export interface LlamaMemoryReport {
+  gpuModelMB: number
+  gpuCacheMB: number
+  gpuComputeMB: number
+  cpuModelMB: number
+  cpuCacheMB: number
+  cpuComputeMB: number
+  layersOnGpu?: number
+  layersTotal?: number
+}
+
+/** Speed of the latest answer from the loaded model, in tokens per second. */
+export interface LlamaSpeed {
+  generation?: number
+  prompt?: number
+  at: number
+}
+
+/* ───────────── Memory planner ───────────── */
+
+/** What the memory planner needs to know about a model, read from the header of its GGUF file. */
+export interface ModelShape {
+  arch: string
+  name?: string
+  /** Size of the whole model on disk (all parts together), in bytes. */
+  fileBytes: number
+  layers: number
+  embedding: number
+  heads: number
+  kvHeads: number
+  headDimK: number
+  headDimV: number
+  /** Cache values per token per layer for models that compress it (MLA); replaces the head sizes. */
+  mlaDim?: number
+  /** The longest context the model was trained for. */
+  trainedContext: number
+  experts: number
+  expertsUsed: number
+  slidingWindow: number
+  /** Which layers only look at a sliding window of recent text, or null when all look at everything. */
+  swaLayers: boolean[] | null
+  /** Bytes of weights in each layer, and how much of that is the routed experts. */
+  layerBytes: number[]
+  layerExpertBytes: number[]
+  /** Word embeddings (always kept in RAM) and the output layer (reuses the embeddings when tied). */
+  embedBytes: number
+  outputBytes: number
+  outputTied: boolean
+  otherBytes: number
+  /** The estimate may be off for this kind of model (it is new, or not a plain transformer). */
+  rough: boolean
+  /** Size of the picture-reading file next to the model, if there is one. */
+  mmprojBytes: number
+}
+
+/** What this computer offers the planner. */
+export interface MemoryHardware {
+  /** The engine build that will run the model; null when it is your own binary or not installed. */
+  backend: EngineBackend | null
+  gpuName: string
+  gpuCount: number
+  /** Video memory in MB (all cards of the main kind together); 0 without a GPU. */
+  vramMB: number
+  ramMB: number
+  gpuBandwidthGBs: number
+  gpuBandwidthKnown: boolean
+  ramBandwidthGBs: number
+  ramDetail: string
+  ramDetected: boolean
+  /** Which memory-placement flags the installed llama.cpp understands. */
+  flags: { nCpuMoe: boolean; overrideTensor: boolean; noKvOffload: boolean; known: boolean }
+}
+
 export type LlamaState = 'stopped' | 'starting' | 'running' | 'error'
 
 export interface LlamaStatus {
   state: LlamaState
+  /** What the engine reported about where the model went, once it finished loading. */
+  memory?: LlamaMemoryReport
+  speed?: LlamaSpeed
   modelPath?: string
   mmprojPath?: string
   port?: number
@@ -721,6 +869,10 @@ export interface ChatSettings {
   sendOnEnter: boolean
   /** Soft context budget (tokens) used to trim long chats; 0 = auto for local, unlimited otherwise. */
   contextBudget: number
+  /** Summarize the older part of a chat when the model's memory is nearly full, instead of dropping it. */
+  autoCompact: boolean
+  /** How full the memory may get before that happens, as a percent of the room for the conversation. */
+  compactAt: number
   /** Default for new chats; each chat can override it from the message box. */
   thinking: ThinkingMode
 }
@@ -756,6 +908,7 @@ export interface Settings {
   local: LocalRuntimeSettings
   image: ImageSettings
   server: ServerSettings
+  remote: RemoteSettings
   paths: PathSettings
   onboardingDismissed: boolean
 }
@@ -820,6 +973,70 @@ export interface ServerStatus {
   total: number
   startedAt?: number
   recent: ServerLogEntry[]
+}
+
+/* ───────────────────────────── Companion (phones and tablets) ───────────────────────────── */
+
+/** Lets paired phones and tablets use this computer's chats, pictures and models from a web page. */
+export interface RemoteSettings {
+  /** Serve the companion web app (and start again whenever Cairn starts). */
+  enabled: boolean
+  port: number
+  /** An address to put in the QR code instead of the detected ones, for a Tailscale name, a tunnel or a domain. */
+  publicUrl: string
+  /** Stop the computer from sleeping while the companion is on, so the phone can always reach it. */
+  keepAwake: boolean
+}
+
+/** What a paired device may do besides chatting. Chatting with models is always allowed once paired. */
+export interface RemoteScopes {
+  /** See and make pictures. */
+  images: boolean
+  /** Let the assistant use tools (files, commands) in chats started from this device, and answer permission requests. */
+  tools: boolean
+}
+
+export interface RemoteDevice {
+  id: string
+  name: string
+  createdAt: number
+  lastSeenAt: number
+  /** Where it last connected from. */
+  lastAddress?: string
+  scopes: RemoteScopes
+  /** Has the live connection open right now. */
+  online: boolean
+}
+
+export interface RemoteAddress {
+  /** "Home Wi-Fi", "Tailscale", "Your address". */
+  label: string
+  /** The page a phone opens, such as http://192.168.1.20:8742 */
+  url: string
+  kind: 'lan' | 'tailscale' | 'custom'
+}
+
+export type RemoteState = 'stopped' | 'starting' | 'running' | 'error'
+
+export interface RemoteStatus {
+  state: RemoteState
+  error?: string
+  port?: number
+  addresses: RemoteAddress[]
+  devices: RemoteDevice[]
+  /** The computer is being kept awake right now. */
+  awake: boolean
+  /** The companion web app has not been built yet (a development checkout), so phones would see nothing. */
+  missingClient: boolean
+}
+
+/** A one-time pairing offer shown on this computer: scan the code or type it on the phone. */
+export interface RemotePairing {
+  /** The code in its short form, "K7QM-4TXD". */
+  code: string
+  expiresAt: number
+  /** One link per address; the phone's own camera opens it and signs in. */
+  links: { label: string; kind: RemoteAddress['kind']; url: string }[]
 }
 
 /* ───────────────────────────── System ───────────────────────────── */

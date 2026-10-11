@@ -1,15 +1,16 @@
-import { AlertCircle, Brain, ChevronRight, Copy, FileText, Info, Pencil, RotateCcw } from 'lucide-react'
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { Attachment, ChatMessage, Conversation, ImageRef, ToolProgress } from '@shared/types'
+import { AlertCircle, Brain, ChevronRight, Copy, FileText, Info, Pencil, RotateCcw, Scissors } from 'lucide-react'
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { Attachment, ChatMessage, Compaction, Conversation, ImageRef, ToolProgress } from '@shared/types'
 import { mediaUrl } from '@/lib/api'
 import { cx, formatBytes, formatDuration } from '@/lib/format'
 import { useChat } from '@/store/chat'
 import { useComposerBus } from '@/store/composer'
 import { useImages } from '@/store/images'
+import { SummaryModal } from './ContextMeter'
 import { Markdown } from './Markdown'
 import { ToolCard } from './ToolCard'
 import { ImageProgress } from './ImageProgress'
-import { IconButton } from './ui'
+import { Button, IconButton, Modal } from './ui'
 
 /* ───────────── pieces ───────────── */
 
@@ -26,19 +27,64 @@ function ImageGrid({ images }: { images: ImageRef[] }) {
   )
 }
 
+/** A text or code file sent with a message. Tapping it shows what the model read, with a copy button and a way to save it. */
+function FileChip({ a }: { a: Attachment }) {
+  const [open, setOpen] = useState(false)
+  const text = a.text
+  const save = () => {
+    const url = URL.createObjectURL(new Blob([text ?? ''], { type: a.mime || 'text/plain' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = a.name
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 2000)
+  }
+  const body = (
+    <>
+      <FileText size={14} />
+      <span className="ellipsis">{a.name}</span>
+      <span className="faint xs">{formatBytes(a.size)}</span>
+    </>
+  )
+  if (text === undefined) {
+    return (
+      <span className="att-file" title={a.name}>
+        {body}
+      </span>
+    )
+  }
+  return (
+    <>
+      <button type="button" className="att-file openable" title={`Show ${a.name}`} onClick={() => setOpen(true)}>
+        {body}
+      </button>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={a.name}
+        width={760}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => void navigator.clipboard.writeText(text)}>
+              Copy
+            </Button>
+            <Button onClick={save}>Save a copy</Button>
+          </>
+        }
+      >
+        <pre className="att-text selectable">{text}</pre>
+      </Modal>
+    </>
+  )
+}
+
 function AttachmentChips({ items }: { items: Attachment[] }) {
   return (
     <div className="msg-attachments">
       {items.map((a) =>
-        a.kind === 'image' ? (
-          <img key={a.id} className="att-thumb" src={mediaUrl('attachment', a.file)} alt={a.name} title={a.name} draggable={false} />
-        ) : (
-          <span key={a.id} className="att-file" title={a.name}>
-            <FileText size={14} />
-            <span className="ellipsis">{a.name}</span>
-            <span className="faint xs">{formatBytes(a.size)}</span>
-          </span>
-        )
+        a.kind === 'image' ? <img key={a.id} className="att-thumb" src={mediaUrl('attachment', a.file)} alt={a.name} title={a.name} draggable={false} /> : <FileChip key={a.id} a={a} />
       )}
     </div>
   )
@@ -184,6 +230,25 @@ const AssistantMessage = memo(function AssistantMessage({ m, results, live, show
   )
 })
 
+/** Where the model's view of the chat starts: everything above this line is summarized for it. */
+function CompactionNote({ c }: { c: Compaction }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="compaction-note">
+      <span className="compaction-line" />
+      <button type="button" className="compaction-chip" onClick={() => setOpen(true)} title="See what the model reads in place of the messages above">
+        <Scissors size={12} />
+        <span>
+          Summarized for the model: {c.messages} messages, {c.toolCalls} tool calls
+        </span>
+        <span className="link-btn">View</span>
+      </button>
+      <span className="compaction-line" />
+      <SummaryModal compaction={c} open={open} onClose={() => setOpen(false)} />
+    </div>
+  )
+}
+
 /* ───────────── list ───────────── */
 
 interface ListProps {
@@ -211,6 +276,14 @@ export function MessageList({ conv, running, status, runError, progress }: ListP
     })
     return { items, results }
   }, [conv.messages])
+
+  // The line goes after the last visible message the summary covers (that message itself may be a hidden tool result).
+  const noteAfter = useMemo(() => {
+    if (!conv.compaction) return null
+    const at = conv.messages.findIndex((m) => m.id === conv.compaction!.upToMessageId)
+    for (let i = at; i >= 0; i--) if (conv.messages[i].role !== 'tool') return conv.messages[i].id
+    return null
+  }, [conv.messages, conv.compaction])
 
   const lastUserIndex = useMemo(() => {
     for (let i = conv.messages.length - 1; i >= 0; i--) if (conv.messages[i].role === 'user') return i
@@ -242,23 +315,24 @@ export function MessageList({ conv, running, status, runError, progress }: ListP
   return (
     <div className="messages" ref={scroller} onScroll={onScroll}>
       <div className="messages-inner">
-        {items.map(({ m, showModel, footer }) => {
-          if (m.role === 'user') {
-            return <UserMessage key={m.id} m={m} canEdit={!running && conv.messages.indexOf(m) === lastUserIndex} />
-          }
-          return (
-            <AssistantMessage
-              key={m.id}
-              m={m}
-              results={results}
-              live={running}
-              showModel={showModel}
-              footer={footer}
-              progress={progress}
-              canRegenerate={!running && m.id === lastAssistantId && lastUserIndex >= 0}
-            />
-          )
-        })}
+        {items.map(({ m, showModel, footer }) => (
+          <Fragment key={m.id}>
+            {m.role === 'user' ? (
+              <UserMessage m={m} canEdit={!running && conv.messages.indexOf(m) === lastUserIndex} />
+            ) : (
+              <AssistantMessage
+                m={m}
+                results={results}
+                live={running}
+                showModel={showModel}
+                footer={footer}
+                progress={progress}
+                canRegenerate={!running && m.id === lastAssistantId && lastUserIndex >= 0}
+              />
+            )}
+            {conv.compaction && m.id === noteAfter && <CompactionNote c={conv.compaction} />}
+          </Fragment>
+        ))}
         {running && status && (
           <div className="run-status">
             <span className="dot-pulse" />

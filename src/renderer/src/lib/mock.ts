@@ -12,6 +12,7 @@ import type {
   ApprovalRequest,
   ChatEvent,
   ChatMessage,
+  Compaction,
   Conversation,
   ConversationSummary,
   DownloadItem,
@@ -20,7 +21,11 @@ import type {
   ImageStage,
   ImageTargetOption,
   LlamaStatus,
+  MemoryHardware,
   ModelOption,
+  ModelShape,
+  RemoteDevice,
+  RemoteStatus,
   ServerStatus,
   Settings,
   ToolInfo
@@ -31,7 +36,8 @@ import { ridgeHeights } from '@/components/Ridgeline'
 type Handlers = { [K in InvokeChannel]?: (...args: IpcInvokeMap[K]['args']) => IpcInvokeMap[K]['result'] | Promise<IpcInvokeMap[K]['result']> }
 
 const q = new URLSearchParams(location.search)
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+// ?fast makes the scripted image jobs finish in about a second.
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, q.has('fast') ? Math.min(ms, 120) : ms))
 const now = Date.now()
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -44,7 +50,15 @@ function hash(s: string): number {
   return h >>> 0
 }
 
-export function mountainArt(seed: string, w = 512, h = 512): string {
+/** A region of a picture, as fractions of its width and height. */
+interface Region {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export function mountainArt(seed: string, w = 512, h = 512, patches: Region[] = []): string {
   const n = hash(seed)
   const hue = [12, 200, 265, 150, 30, 330][n % 6]
   const sky1 = `hsl(${hue} 45% ${18 + (n % 9)}%)`
@@ -60,7 +74,11 @@ export function mountainArt(seed: string, w = 512, h = 512): string {
     return `<path d="${d} L${w},${h} Z" fill="hsl(${(hue + 10 * i) % 360} ${40 - i * 6}% ${34 - i * 8}%)" opacity="${0.55 + i * 0.15}"/>`
   })
   const sx = (0.25 + ((n >> 3) % 50) / 100) * w
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${sky1}"/><stop offset="1" stop-color="${sky2}"/></linearGradient><radialGradient id="s"><stop offset="0" stop-color="#fff3d6" stop-opacity=".95"/><stop offset="1" stop-color="#fff3d6" stop-opacity="0"/></radialGradient></defs><rect width="${w}" height="${h}" fill="url(#g)"/><circle cx="${sx}" cy="${h * 0.34}" r="${h * 0.16}" fill="url(#s)"/>${layers.join('')}</svg>`
+  // A repainted region: something new and obvious inside the part that was painted.
+  const edit = patches.length
+    ? `<defs><linearGradient id="au" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5eead4"/><stop offset=".55" stop-color="#a78bfa"/><stop offset="1" stop-color="#f472b6"/></linearGradient><filter id="soft"><feGaussianBlur stdDeviation="${(w * 0.012).toFixed(1)}"/></filter></defs>${patches.map((patch) => `<ellipse cx="${((patch.x + patch.w / 2) * w).toFixed(1)}" cy="${((patch.y + patch.h / 2) * h).toFixed(1)}" rx="${((patch.w / 2) * w).toFixed(1)}" ry="${((patch.h / 2) * h).toFixed(1)}" fill="url(#au)" opacity=".9" filter="url(#soft)"/>`).join('')}`
+    : ''
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${sky1}"/><stop offset="1" stop-color="${sky2}"/></linearGradient><radialGradient id="s"><stop offset="0" stop-color="#fff3d6" stop-opacity=".95"/><stop offset="1" stop-color="#fff3d6" stop-opacity="0"/></radialGradient></defs><rect width="${w}" height="${h}" fill="url(#g)"/><circle cx="${sx}" cy="${h * 0.34}" r="${h * 0.16}" fill="url(#s)"/>${layers.join('')}${edit}</svg>`
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
 }
 
@@ -77,6 +95,37 @@ const PROMPTS = [
   'Moonlit peak reflected in a still tarn, stars, long exposure',
   'Prayer flags fluttering on a high pass, Himalayan sunrise, shallow depth of field'
 ]
+
+/** Which picture a result was repainted from and where, so the demo shows the change. */
+const repainted = new Map<string, { from: string; regions: Region[] }>()
+const masks = new Map<string, Uint8Array>()
+
+async function maskRegion(png: Uint8Array): Promise<Region | null> {
+  const bmp = await createImageBitmap(new Blob([png as BlobPart], { type: 'image/png' }))
+  const w = Math.min(bmp.width, 160)
+  const h = Math.max(1, Math.round((w * bmp.height) / bmp.width))
+  const c = document.createElement('canvas')
+  c.width = w
+  c.height = h
+  const g = c.getContext('2d', { willReadFrequently: true })!
+  g.drawImage(bmp, 0, 0, w, h)
+  const d = g.getImageData(0, 0, w, h).data
+  let x0 = w
+  let y0 = h
+  let x1 = 0
+  let y1 = 0
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (d[(y * w + x) * 4] > 127) {
+        x0 = Math.min(x0, x)
+        x1 = Math.max(x1, x)
+        y0 = Math.min(y0, y)
+        y1 = Math.max(y1, y)
+      }
+    }
+  }
+  return x1 < x0 ? null : { x: x0 / w, y: y0 / h, w: (x1 - x0 + 1) / w, h: (y1 - y0 + 1) / h }
+}
 
 const records: ImageRecord[] = Array.from({ length: 14 }, (_, i) => {
   const [width, height] = SIZES[i % SIZES.length]
@@ -120,6 +169,7 @@ const modelsAll: ModelOption[] = onboarding
 const settings: Settings = (() => {
   const s = defaultSettings('/home/corey/.cairn/models')
   s.onboardingDismissed = !onboarding
+  s.remote.enabled = q.get('remote') === 'on'
   s.defaultModel = modelsAll[0]?.ref ?? ''
   s.agent.workspace = '/home/corey/projects/alpine-notes'
   s.providers.push(
@@ -136,6 +186,26 @@ const settings: Settings = (() => {
 const demoAssistant = (id: string, parts: Partial<ChatMessage>): ChatMessage => ({ id, role: 'assistant', createdAt: now - 12 * MIN, content: '', status: 'done', model: 'Qwen3-8B-Q4_K_M', ...parts })
 
 const conversations = new Map<string, Conversation>()
+
+const DEMO_COMPACTION: Compaction = {
+  narrative:
+    'Goal: Port the parser module from JavaScript to TypeScript, keeping the existing tests passing and not changing public behaviour.\nDone: Converted src/lexer.js and src/tokens.js to .ts with explicit types and created src/types.ts (Token and AstNode interfaces).\nLearned: src/parser.js builds nodes through a shared helper node(type, props); tests/parser.test.js imports from ../src/parser.js, so import paths must change last. The first npm test failed with TS2345 in src/lexer.ts line 88 (char typed as string | undefined).\nNext: fix that type, convert src/parser.js, update the test imports, run npm test and npm run build.',
+  asks: ["Port the parser module to TypeScript and keep the tests green. Don't touch the CLI entry point yet."],
+  ledger: [
+    { k: 'read', t: 'src/lexer.js', n: 1 },
+    { k: 'read', t: 'src/tokens.js', n: 1 },
+    { k: 'wrote', t: 'src/types.ts', n: 1, note: 'written' },
+    { k: 'cmd', t: 'npm test', n: 1, note: 'exit 1' }
+  ],
+  upToMessageId: 'pt4',
+  messages: 8,
+  toolCalls: 4,
+  tokensBefore: 9_400,
+  tokensAfter: 2_100,
+  createdAt: now - 22 * MIN,
+  source: 'model',
+  rounds: 1
+}
 function seedConversations(): void {
   if (emptyScenario) return
   const mk = (id: string, title: string, ago: number, extra: Partial<Conversation> = {}): Conversation => ({
@@ -152,6 +222,7 @@ function seedConversations(): void {
     'c_demo0',
     mk('c_demo0', 'Tidy the trail-notes repo', 14 * MIN, {
       workspace: '/home/corey/projects/alpine-notes',
+      contextUsage: { used: 3_120, window: 16_384, at: now - 14 * MIN },
       messages: [
         { id: 'm0', role: 'user', createdAt: now - 16 * MIN, content: 'The README is out of date and the sort script has a bug with accented names. Can you fix both?' },
         demoAssistant('m1', {
@@ -200,6 +271,33 @@ function seedConversations(): void {
       ]
     })
   )
+  const tc = (id: string, name: string, args: object) => ({ id, name, arguments: JSON.stringify(args) })
+  const result = (id: string, callId: string, name: string, content: string, extra: Partial<ChatMessage> = {}): ChatMessage => ({ id, role: 'tool', createdAt: now - 20 * MIN, toolCallId: callId, toolName: name, content, ...extra })
+  conversations.set(
+    'c_demo5',
+    mk('c_demo5', 'Port the parser to TypeScript', 6 * MIN, {
+      workspace: '/home/corey/projects/alpine-notes',
+      contextUsage: { used: 11_960, window: 16_384, at: now - 6 * MIN },
+      compaction: DEMO_COMPACTION,
+      messages: [
+        { id: 'p0', role: 'user', createdAt: now - 40 * MIN, content: "Port the parser module to TypeScript and keep the tests green. Don't touch the CLI entry point yet." },
+        demoAssistant('p1', { content: 'I will start with the lexer and the shared types.', toolCalls: [tc('pc1', 'read_file', { path: 'src/lexer.js' }), tc('pc2', 'read_file', { path: 'src/tokens.js' })] }),
+        result('pt1', 'pc1', 'read_file', '     1\texport function lex(src) { /* … */ }'),
+        result('pt2', 'pc2', 'read_file', '     1\texport const TOKENS = { /* … */ }'),
+        demoAssistant('p2', { content: 'Creating the shared types first.', toolCalls: [tc('pc3', 'write_file', { path: 'src/types.ts' })] }),
+        result('pt3', 'pc3', 'write_file', 'Created src/types.ts (38 lines).'),
+        demoAssistant('p3', { toolCalls: [tc('pc4', 'run_command', { command: 'npm test' })] }),
+        result('pt4', 'pc4', 'run_command', 'Exit code: 1\nFAIL tests/lexer.test.js\nTS2345: Argument of type string is not assignable…', { isError: true }),
+        demoAssistant('p4', { content: 'The failing test is in the lexer. Let me look at around line 88.', toolCalls: [tc('pc5', 'read_file', { path: 'src/lexer.ts', offset: 70, limit: 40 })] }),
+        result('pt5', 'pc5', 'read_file', '    70\t…'),
+        demoAssistant('p5', { toolCalls: [tc('pc6', 'edit_file', { path: 'src/lexer.ts', old_string: 'const ch = src[i]', new_string: 'const ch: string = src[i]' })] }),
+        result('pt6', 'pc6', 'edit_file', 'Edited src/lexer.ts (1 replacement).'),
+        demoAssistant('p6', { content: 'Fixed the type. Running the tests again.', toolCalls: [tc('pc7', 'run_command', { command: 'npm test' })] }),
+        result('pt7', 'pc7', 'run_command', 'Exit code: 0\n42 passed'),
+        demoAssistant('p7', { content: 'The lexer and token files are converted and all 42 tests pass. Next I will convert `src/parser.js`, then update the test imports.', durationMs: 7300, usage: { promptTokens: 11_700, completionTokens: 260, tokensPerSecond: 36.1 } })
+      ]
+    })
+  )
   conversations.set('c_demo3', mk('c_demo3', 'Weekend hut booking email', 3 * 24 * HOUR))
   conversations.set('c_demo4', mk('c_demo4', 'GGUF vs safetensors', 9 * 24 * HOUR))
 }
@@ -235,7 +333,32 @@ const IMAGE_STEPS: { stage: ImageStage; label: string; fraction: number; ms: num
 
 const UPSCALE_STEP = { stage: 'upscaling' as ImageStage, label: 'Upscaling the finished image…', fraction: 0.95, ms: 3000 }
 
-const llama: LlamaStatus = { state: 'running', modelPath: '/models/llm/Qwen3-8B-Q4_K_M.gguf', port: 53211, pid: 4242, startedAt: now - 20 * MIN, log: ['llama_model_loader: loaded meta data with 28 key-value pairs', 'load_tensors: offloaded 37/37 layers to GPU', 'main: server is listening on http://127.0.0.1:53211'] }
+const llama: LlamaStatus = { state: 'running', modelPath: q.get('loaded') ? `/models/llm/${q.get('loaded')}.gguf` : '/models/llm/Qwen3-8B-Q4_K_M.gguf', memory: { gpuModelMB: 4980, gpuCacheMB: 1152, gpuComputeMB: 305, cpuModelMB: 290, cpuCacheMB: 0, cpuComputeMB: 17, layersOnGpu: 37, layersTotal: 37 }, speed: { generation: 38.4, prompt: 912, at: now - 2 * MIN }, port: 53211, pid: 4242, startedAt: now - 20 * MIN, log: ['llama_model_loader: loaded meta data with 28 key-value pairs', 'load_tensors: offloaded 37/37 layers to GPU', 'main: server is listening on http://127.0.0.1:53211'] }
+
+/* ───────────── memory planner ───────────── */
+
+const evenly = (n: number, total: number): number[] => Array.from({ length: n }, () => Math.round(total / n))
+const flagsOk = { nCpuMoe: true, overrideTensor: true, noKvOffload: true, known: true }
+
+/** The computer the planner sees: ?hw=small (8 GB card, 16 GB RAM), ?hw=cpu (no graphics card), ?hw=big (24 GB card, 64 GB RAM); otherwise a 16 GB card with 32 GB of RAM. */
+function memoryHardware(): MemoryHardware {
+  const kind = q.get('hw')
+  if (kind === 'cpu') return { backend: 'cpu', gpuName: '', gpuCount: 0, vramMB: 0, ramMB: 16384, gpuBandwidthGBs: 0, gpuBandwidthKnown: false, ramBandwidthGBs: 36, ramDetail: 'assumed ordinary dual-channel DDR4', ramDetected: false, flags: flagsOk }
+  if (kind === 'small') return { backend: 'vulkan', gpuName: 'NVIDIA GeForce RTX 3060', gpuCount: 1, vramMB: 8192, ramMB: 16384, gpuBandwidthGBs: 360, gpuBandwidthKnown: true, ramBandwidthGBs: 35.8, ramDetail: 'DDR4-3200, 2 sticks', ramDetected: true, flags: flagsOk }
+  if (kind === 'big') return { backend: 'cuda', gpuName: 'NVIDIA GeForce RTX 3090', gpuCount: 1, vramMB: 24576, ramMB: 65536, gpuBandwidthGBs: 936, gpuBandwidthKnown: true, ramBandwidthGBs: 62.7, ramDetail: 'DDR5-5600, 2 sticks', ramDetected: true, flags: flagsOk }
+  return { backend: 'vulkan', gpuName: 'AMD Radeon RX 6900 XT', gpuCount: 1, vramMB: 16384, ramMB: 32768, gpuBandwidthGBs: 512, gpuBandwidthKnown: true, ramBandwidthGBs: 35.8, ramDetail: 'DDR4-3200, 2 sticks', ramDetected: true, flags: flagsOk }
+}
+
+function modelShape(file: string): ModelShape {
+  const dense = (layers: number, total: number, over: Partial<ModelShape> = {}): ModelShape => ({
+    arch: 'llama', fileBytes: total, layers, embedding: 4096, heads: 32, kvHeads: 8, headDimK: 128, headDimV: 128, trainedContext: 131072, experts: 0, expertsUsed: 0, slidingWindow: 0, swaLayers: null,
+    layerBytes: evenly(layers, total * 0.9), layerExpertBytes: new Array(layers).fill(0), embedBytes: total * 0.05, outputBytes: total * 0.05, outputTied: false, otherBytes: 1_000_000, rough: false, mmprojBytes: 0, ...over
+  })
+  if (/30B-A3B/i.test(file)) return dense(48, 18_600_000_000, { arch: 'qwen3moe', embedding: 2048, kvHeads: 4, trainedContext: 40960, experts: 128, expertsUsed: 8, layerBytes: evenly(48, 17_400_000_000), layerExpertBytes: evenly(48, 16_600_000_000), embedBytes: 350_000_000, outputBytes: 500_000_000 })
+  if (/70B/i.test(file)) return dense(80, 42_500_000_000, { embedding: 8192, heads: 64 })
+  if (/gemma/i.test(file)) return dense(48, 7_300_000_000, { arch: 'gemma3', embedding: 3840, heads: 16, headDimK: 256, headDimV: 256, slidingWindow: 1024, swaLayers: Array.from({ length: 48 }, (_, i) => i % 6 < 5), outputTied: true, mmprojBytes: 850_000_000 })
+  return dense(36, 5_030_000_000, { arch: 'qwen3', embedding: 4096, heads: 32, kvHeads: 8, trainedContext: 40960 })
+}
 
 const downloads: DownloadItem[] = onboarding
   ? []
@@ -285,6 +408,28 @@ function serverStatus(): ServerStatus {
 
 function emit<K extends EventChannel>(channel: K, payload: IpcEventMap[K]): void {
   listeners.get(channel)?.forEach((l) => (l as (p: IpcEventMap[K]) => void)(payload))
+}
+
+/* ───────────── phone companion ───────────── */
+
+const remoteDevices: RemoteDevice[] = q.get('devices') === 'none' ? [] : [
+  { id: 'd1', name: 'iPhone · Safari', createdAt: Date.now() - 9 * 86_400_000, lastSeenAt: Date.now() - 40_000, lastAddress: '192.168.1.41', scopes: { images: true, tools: false }, online: true },
+  { id: 'd2', name: 'Pixel tablet', createdAt: Date.now() - 30 * 86_400_000, lastSeenAt: Date.now() - 3 * 3_600_000, lastAddress: '100.101.4.7', scopes: { images: true, tools: true }, online: false }
+]
+const remoteAddresses = () => [
+  { label: 'Same Wi-Fi', url: `http://192.168.1.24:${settings.remote.port}`, kind: 'lan' as const },
+  { label: 'Tailscale · anywhere', url: `http://100.88.12.5:${settings.remote.port}`, kind: 'tailscale' as const }
+]
+function remoteStatus(): RemoteStatus {
+  const on = settings.remote.enabled
+  return { state: on ? 'running' : 'stopped', port: on ? settings.remote.port : undefined, addresses: on ? remoteAddresses() : [], devices: remoteDevices.map((d) => ({ ...d })), awake: on && settings.remote.keepAwake, missingClient: false }
+}
+/** For screenshots: pretend a phone just used the code. */
+;(window as unknown as { __demoPaired: () => void }).__demoPaired = () => {
+  const d: RemoteDevice = { id: `d${remoteDevices.length + 1}`, name: 'Corey’s iPhone', createdAt: Date.now(), lastSeenAt: Date.now(), lastAddress: '192.168.1.57', scopes: { images: true, tools: false }, online: true }
+  remoteDevices.unshift(d)
+  emit('remote:paired', d)
+  emit('remote:status', remoteStatus())
 }
 const chatEvent = (e: ChatEvent) => emit('chat:event', e)
 
@@ -396,9 +541,29 @@ const handlers: Handlers = {
   'settings:update': (patch) => {
     Object.assign(settings, patch)
     if (patch.server) emit('server:status', serverStatus())
+    if (patch.remote) setTimeout(() => emit('remote:status', remoteStatus()), 350)
     return { ...settings }
   },
   'server:status': () => serverStatus(),
+  'remote:status': () => remoteStatus(),
+  'remote:pair': () => {
+    const code = 'K7QM4TXD'
+    return { code: 'K7QM-4TXD', expiresAt: Date.now() + (q.get('expiring') ? 6_000 : 5 * 60_000), links: remoteAddresses().map((a) => ({ label: a.label, kind: a.kind, url: `${a.url}/#pair=${code}` })) }
+  },
+  'remote:cancelPair': () => undefined,
+  'remote:updateDevice': (id, patch) => {
+    const d = remoteDevices.find((x) => x.id === id)
+    if (!d) return null
+    if (patch.name) d.name = patch.name
+    if (patch.scopes) d.scopes = { ...d.scopes, ...patch.scopes }
+    emit('remote:status', remoteStatus())
+    return { ...d }
+  },
+  'remote:removeDevice': (id) => {
+    const i = remoteDevices.findIndex((x) => x.id === id)
+    if (i >= 0) remoteDevices.splice(i, 1)
+    emit('remote:status', remoteStatus())
+  },
   'server:models': () => {
     const sv = settings.server
     const row = (id: string, name: string, type: 'chat' | 'image', key: string, available = true, detail?: string) => ({ id, name, type, key, exposed: sv.exposeAll || (type === 'chat' ? sv.chatModels : sv.imageModels).includes(key), available, detail })
@@ -452,6 +617,30 @@ const handlers: Handlers = {
     return { runId: 'run' }
   },
   'chat:regenerate': () => ({ runId: 'run' }),
+  'chat:compact': (id) => {
+    const c = conversations.get(id)!
+    if (c.messages.length < 4) throw new Error('There is not enough earlier conversation to summarize yet.')
+    void (async () => {
+      chatEvent({ type: 'run-start', runId: 'sum', conversationId: id })
+      chatEvent({ type: 'status', runId: 'sum', conversationId: id, status: 'Summarizing the earlier conversation to free up memory…' })
+      await sleep(1600)
+      const upTo = c.messages[Math.max(0, c.messages.length - 5)]
+      c.compaction = { ...DEMO_COMPACTION, upToMessageId: upTo.id, messages: c.messages.indexOf(upTo) + 1, createdAt: Date.now() }
+      c.contextUsage = { used: 5_200, window: c.contextUsage?.window ?? 16_384, at: Date.now() }
+      chatEvent({ type: 'status', runId: 'sum', conversationId: id, status: '' })
+      chatEvent({ type: 'compaction', conversationId: id, compaction: c.compaction })
+      chatEvent({ type: 'context', conversationId: id, usage: c.contextUsage })
+      chatEvent({ type: 'run-end', runId: 'sum', conversationId: id, outcome: 'done' })
+    })()
+  },
+  'chat:uncompact': (id) => {
+    const c = conversations.get(id) ?? null
+    if (c) {
+      c.compaction = undefined
+      chatEvent({ type: 'compaction', conversationId: id })
+    }
+    return c
+  },
   'chat:abort': (id) => aborts.get(id)?.abort(),
   'chat:approve': (id, d) => pendingApprovals.get(id)?.(d),
   'chat:active': () => [],
@@ -485,15 +674,23 @@ const handlers: Handlers = {
         emit('images:job', { ...job, progress: step.fraction, label: step.label, stage: step.stage })
         await sleep(step.ms)
       }
-      const id = newId('img_')
       const factor = req.upscale ? (/2x|x2/i.test(req.upscale.path) ? 2 : 4) ** (req.upscale.repeats ?? 1) : 1
-      const w = (req.width || 1024) * factor
-      const h = (req.height || 1024) * factor
+      const from = req.initImageId ? records.find((r) => r.id === req.initImageId) : undefined
+      // A repainted picture comes back the size of the original, with only the painted part changed.
+      const region = req.inpaint && from ? await maskRegion(masks.get(req.inpaint.maskId) ?? new Uint8Array()).catch(() => null) : null
+      const w = (region && from ? from.width : req.width || 1024) * factor
+      const h = (region && from ? from.height : req.height || 1024) * factor
       const upscaler = req.upscale ? req.upscale.path.split('/').pop()!.replace(/\.[^.]+$/, '') : undefined
-      const rec: ImageRecord = { ...records[0], id, file: `${id}.png`, thumb: `${id}.jpg`, createdAt: Date.now(), prompt: req.prompt, width: w, height: h, source: 'hub', favorite: false, seed: req.upscaleOf ? req.seed : Math.floor(Math.random() * 1e9), loras: req.loras, upscaler, upscaledFrom: req.upscaleOf }
-      records.unshift(rec)
-      emit('images:added', rec)
-      emit('images:job', { ...job, status: 'done', progress: 1, resultIds: [id] })
+      const made: ImageRecord[] = []
+      for (let i = 0; i < (req.upscaleOf ? 1 : Math.max(1, req.count || 1)); i++) {
+        const id = newId('img_')
+        const rec: ImageRecord = { ...records[0], id, file: `${id}.png`, thumb: `${id}.jpg`, createdAt: Date.now() + i, prompt: req.prompt, width: w, height: h, source: 'hub', favorite: false, seed: req.upscaleOf ? req.seed : Math.floor(Math.random() * 1e9), loras: req.loras, upscaler, upscaledFrom: req.upscaleOf, initImageId: req.initImageId, strength: req.initImageId ? req.strength : undefined }
+        records.unshift(rec)
+        if (region && from) repainted.set(id, { from: repainted.get(from.id)?.from ?? from.id, regions: [...(repainted.get(from.id)?.regions ?? []), region] })
+        made.push(rec)
+        emit('images:added', rec)
+      }
+      emit('images:job', { ...job, status: 'done', progress: 1, resultIds: made.map((r) => r.id) })
     })()
     return { jobId: job.id }
   },
@@ -509,7 +706,11 @@ const handlers: Handlers = {
   'images:reveal': () => undefined,
   'images:saveAs': () => '/home/corey/Pictures/lake.png',
   'images:toAttachment': () => null,
-  'images:setMask': () => ({ maskId: newId('mask_') }),
+  'images:setMask': (png) => {
+    const maskId = newId('mask_')
+    masks.set(maskId, png)
+    return { maskId }
+  },
   'images:import': (name) => {
     const id = newId('img_')
     const rec: ImageRecord = { ...records[0], id, file: `${id}.png`, thumb: `${id}.jpg`, createdAt: Date.now(), prompt: name, negativePrompt: '', backendId: 'import', backendName: 'Imported', model: '', seed: 0, durationMs: 0, favorite: false, imported: true, initImageId: undefined, strength: undefined, loras: undefined }
@@ -539,6 +740,8 @@ const handlers: Handlers = {
   'llama:status': () => llama,
   'llama:start': () => undefined,
   'llama:stop': () => undefined,
+  'memory:hardware': () => memoryHardware(),
+  'memory:inspect': (file) => modelShape(file),
   'library:setName': (p, name) => {
     const names = { ...(settings.local.modelNames ?? {}) }
     if (name.trim()) names[p] = name.trim()
@@ -551,7 +754,9 @@ const handlers: Handlers = {
       : [
           { path: '/models/llm/Qwen3-8B-Q4_K_M.gguf', name: 'Qwen3-8B-Q4_K_M', sizeBytes: 5_030_000_000, quant: 'Q4_K_M', root: '/models/llm' },
           { path: '/models/llm/gemma-3-12b-it-Q4_K_M.gguf', name: 'gemma-3-12b-it-Q4_K_M', sizeBytes: 7_300_000_000, quant: 'Q4_K_M', mmprojPath: '/models/llm/mmproj.gguf', root: '/models/llm' },
-          { path: '/models/llm/model.gguf', name: 'model', sizeBytes: 4_680_000_000, quant: undefined, root: '/models/llm' }
+          { path: '/models/llm/model.gguf', name: 'model', sizeBytes: 4_680_000_000, quant: undefined, root: '/models/llm' },
+          { path: '/models/llm/Qwen3-30B-A3B-Q4_K_M.gguf', name: 'Qwen3-30B-A3B-Q4_K_M', sizeBytes: 18_600_000_000, quant: 'Q4_K_M', root: '/models/llm' },
+          { path: '/models/llm/Llama-3.3-70B-Instruct-Q4_K_M.gguf', name: 'Llama-3.3-70B-Instruct-Q4_K_M', sizeBytes: 42_500_000_000, quant: 'Q4_K_M', root: '/models/llm' }
         ]
     ).map((f) => ({ ...f, label: settings.local.modelNames?.[f.path] || undefined })),
   'library:imageWeights': () => [
@@ -584,7 +789,13 @@ const handlers: Handlers = {
 export function installMock(): void {
   ;(window as unknown as { __cairnMedia: (kind: string, file: string) => string }).__cairnMedia = (kind, file) => {
     const base = file.replace(/\.[a-z]+$/, '')
-    return mountainArt(base, kind === 'thumb' ? 360 : 1024, kind === 'thumb' ? 360 : 1024)
+    // Draw it in the shape the picture has, so the layouts can be judged with portrait and wide pictures too.
+    const rec = records.find((r) => r.file === file || r.thumb === file)
+    const aspect = rec ? rec.width / rec.height : 1
+    const long = kind === 'thumb' ? 360 : 1024
+    const dims: [number, number] = [Math.round(aspect >= 1 ? long : long * aspect), Math.round(aspect >= 1 ? long / aspect : long)]
+    const edit = rec ? repainted.get(rec.id) : undefined
+    return edit ? mountainArt(edit.from, ...dims, edit.regions) : mountainArt(base, ...dims)
   }
   window.cairn = {
     platform: (q.get('platform') ?? 'linux') as 'linux',
@@ -609,6 +820,19 @@ export function installMock(): void {
       emit('downloads:update', { ...d })
     }
   }, 500)
+  // ?platform=win32 draws stand-ins for the window buttons Windows puts over the top-right corner,
+  // so the layout can be checked for anything that would end up underneath them.
+  if (q.get('platform') === 'win32') {
+    const style = document.createElement('style')
+    style.textContent = `:root[data-platform='win32']{--caption-w:138px}
+.fake-caption{position:fixed;top:0;right:0;width:138px;height:38px;z-index:9999;display:flex;background:#12171c;color:#c8d3d8;font:14px system-ui;pointer-events:none;outline:1px solid rgba(255,255,255,.12)}
+.fake-caption span{flex:1;display:grid;place-items:center}.fake-caption span:last-child{background:#c42b1c;color:#fff}`
+    document.head.append(style)
+    const caption = document.createElement('div')
+    caption.className = 'fake-caption'
+    caption.innerHTML = '<span>&#8212;</span><span>&#9633;</span><span>&#10005;</span>'
+    document.body.append(caption)
+  }
   const view = q.get('view')
   const tab = q.get('tab')
   if (view) {

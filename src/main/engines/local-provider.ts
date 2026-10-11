@@ -1,5 +1,6 @@
 import type { LocalModelFile, ProviderModel, Settings } from '@shared/types'
 import { LOCAL_PROVIDER_ID } from '@shared/defaults'
+import { runtimeFor } from '@shared/runtimePrefs'
 import { OpenAIProvider } from '../providers/openai'
 import type { Provider, ProviderRequest, StreamEvent } from '../providers/types'
 import { scanGguf } from './library'
@@ -48,17 +49,21 @@ export class LocalProvider implements Provider {
   }
 
   async listModels(): Promise<ProviderModel[]> {
-    const ctx = this.d.getSettings().local.contextSize
+    const local = this.d.getSettings().local
     const files = await this.scan(true)
-    return files.map((f) => ({
-      id: f.path,
-      name: f.label ?? f.name,
-      vision: Boolean(f.mmprojPath),
-      tools: true,
-      // Judge by the file name and the chosen name, since either may be the descriptive one.
-      reasoning: /think|reason|r1|qwq|qwen3|gpt-oss/i.test(`${f.name} ${f.label ?? ''}`),
-      contextLength: ctx > 0 ? ctx : undefined
-    }))
+    return files.map((f) => {
+      // A model the memory planner has set up may have a different context length than the general setting.
+      const ctx = runtimeFor(local, f.path).contextSize
+      return {
+        id: f.path,
+        name: f.label ?? f.name,
+        vision: Boolean(f.mmprojPath),
+        tools: true,
+        // Judge by the file name and the chosen name, since either may be the descriptive one.
+        reasoning: /think|reason|r1|qwq|qwen3|gpt-oss/i.test(`${f.name} ${f.label ?? ''}`),
+        contextLength: ctx > 0 ? ctx : undefined
+      }
+    })
   }
 
   async *stream(req: ProviderRequest): AsyncGenerator<StreamEvent> {
@@ -67,7 +72,11 @@ export class LocalProvider implements Provider {
     const lease = await this.d.llama.acquire(req.model, { noThink: req.thinking === 'off', signal: req.signal })
     const inner = new OpenAIProvider({ id: this.id, baseUrl: `${lease.base}/v1`, apiKey: '', headers: {} })
     try {
-      yield* inner.stream({ ...req, model: 'local', modelHint: req.model })
+      for await (const ev of inner.stream({ ...req, model: 'local', modelHint: req.model })) {
+        // The engine times each answer; keep the latest so the memory planner can show how the settings really perform.
+        if (ev.type === 'usage') this.d.llama.noteSpeed({ generation: ev.tokensPerSecond, prompt: ev.promptTokensPerSecond })
+        yield ev
+      }
     } finally {
       lease.release()
     }

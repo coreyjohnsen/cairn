@@ -121,3 +121,17 @@ export async function exportMask(layer: HTMLCanvasElement): Promise<ExportedMask
   for (let i = 0; i < px.length; i += 4) if (px[i] > 127) on++
   return { png: new Uint8Array(await blob.arrayBuffer()), preview: small.toDataURL('image/png'), coverage: on / (small.width * small.height) }
 }
+
+/** Share of the mask layer that is painted, 0 to 1. Measured on a small copy, so it is quick enough to ask after every stroke. */
+export function maskCoverage(layer: HTMLCanvasElement): number {
+  const k = Math.min(1, 160 / Math.max(layer.width, layer.height, 1))
+  const small = document.createElement('canvas')
+  small.width = Math.max(1, Math.round(layer.width * k))
+  small.height = Math.max(1, Math.round(layer.height * k))
+  const ctx = small.getContext('2d', { willReadFrequently: true })!
+  ctx.drawImage(layer, 0, 0, small.width, small.height)
+  const px = ctx.getImageData(0, 0, small.width, small.height).data
+  let on = 0
+  for (let i = 3; i < px.length; i += 4) if (px[i] > 127) on++
+  return on / (small.width * small.height)
+}

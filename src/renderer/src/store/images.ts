@@ -2,48 +2,14 @@ import { create } from 'zustand'
 import type { ImageGenRequest, ImageJob, ImageRecord, ImageTargetOption, LoraFile, LoraSelection, UpscalerFile } from '@shared/types'
 import { invoke, on } from '@/lib/api'
 import { errorText } from '@/lib/format'
+import { DEFAULT_FORM, type HubForm, type StartMode, formAfterPatch, startModeFor } from '@/lib/imageForm'
 import { type Ratio, resolveSize } from '@/lib/imageSize'
 import { pictureToPng } from '@/lib/pictureFile'
 import { useApp } from './app'
+import { useLayout } from './layout'
 
-export type { Ratio }
-
-/** The Image Hub's create panel. Lives in the store so "reuse settings" from anywhere can fill it in. */
-export interface HubForm {
-  prompt: string
-  /** undefined = the default negative prompt from settings */
-  negative?: string
-  /** `${backendId}::${model}`; empty = default target */
-  targetKey: string
-  ratio: Ratio
-  customW: number
-  customH: number
-  /** Multiplier on the model's own size, used with the shape buttons. */
-  scale: number
-  steps?: number
-  cfg?: number
-  sampler?: string
-  seed: number
-  count: number
-  initImageId?: string
-  strength: number
-  /** Part of the starting picture to repaint: white where it changes. Only for the picture it was painted on. */
-  mask?: { png: Uint8Array; preview: string; coverage: number }
-  /** Send only the masked part (sharper detail) or the whole picture to the engine. */
-  inpaintArea: 'masked' | 'whole'
-  /** Width of the soft edge where new meets old, in pixels of the starting picture. */
-  feather: number
-  /** Margin kept around the mask when only the masked part is sent. */
-  padding: number
-  /** LoRAs to apply (built-in engine only). */
-  loras: LoraSelection[]
-  /** Make the finished picture bigger with this upscaler. */
-  upscale?: { path: string; repeats: number }
-  /** The user switched "Upscale when done" off, so the default upscaler is not applied. */
-  upscaleOff?: boolean
-}
-
-export const DEFAULT_FORM: HubForm = { prompt: '', targetKey: '', ratio: 'auto', customW: 1024, customH: 1024, scale: 1, seed: -1, count: 1, strength: 0.6, inpaintArea: 'masked', feather: 12, padding: 64, loras: [] }
+export type { HubForm, Ratio, StartMode }
+export { DEFAULT_FORM }
 
 export const targetKeyOf = (t: { backendId: string; model: string }): string => `${t.backendId}::${t.model}`
 
@@ -60,8 +26,12 @@ interface ImagesState {
   /** Opened in the lightbox, with the ids it can step through. */
   viewing: string | null
   siblings: string[]
-  /** The mask editor is open on the starting picture. */
-  maskEditorOpen: boolean
+  /** The latest generation started from the picture editor; its pictures are shown there, before and after. */
+  editJobId: string | null
+  /** Set by the painting canvas: saves the mask now, so a generation never uses a stale one. */
+  maskFlush: (() => Promise<void>) | null
+  /** The picture or job shown big in the Image Hub: a picture id, or `job:` and a job id. Null follows the newest. */
+  focus: string | null
   init(): Promise<void>
   refreshTargets(force?: boolean): Promise<void>
   refreshAssets(): Promise<void>
@@ -76,7 +46,9 @@ interface ImagesState {
   remove(ids: string[]): Promise<void>
   favorite(id: string, fav: boolean): void
   view(id: string | null, siblings?: string[]): void
-  openMaskEditor(open: boolean): void
+  setEditJob(id: string | null): void
+  setMaskFlush(fn: (() => Promise<void>) | null): void
+  setFocus(key: string | null): void
 }
 
 const byNewest = (a: ImageRecord, b: ImageRecord) => b.createdAt - a.createdAt
@@ -103,7 +75,9 @@ export const useImages = create<ImagesState>()((set, get) => ({
   form: DEFAULT_FORM,
   viewing: null,
   siblings: [],
-  maskEditorOpen: false,
+  editJobId: null,
+  maskFlush: null,
+  focus: null,
 
   async init() {
     on('images:added', (r) => set((s) => ({ records: [r, ...s.records.filter((x) => x.id !== r.id)].sort(byNewest) })))
@@ -144,8 +118,11 @@ export const useImages = create<ImagesState>()((set, get) => ({
   },
 
   setForm(patch) {
-    // A mask belongs to the picture it was painted on.
-    set((s) => ({ form: { ...s.form, ...patch, ...('initImageId' in patch && patch.initImageId !== s.form.initImageId && !('mask' in patch) ? { mask: undefined } : {}) } }))
+    set((s) => {
+      const { form, newBase } = formAfterPatch(s.form, patch)
+      // The pictures made from the old base belong to it too.
+      return { form, ...(newBase ? { editJobId: null } : {}) }
+    })
   },
 
   reuse(rec, opts) {
@@ -176,6 +153,7 @@ export const useImages = create<ImagesState>()((set, get) => ({
         count: 1,
         // A picture made from another one keeps that starting picture (and how far it moved) when its settings are reused.
         initImageId: opts?.asInit ? rec.id : rec.initImageId && s.records.some((r) => r.id === rec.initImageId) ? rec.initImageId : undefined,
+        startMode: startModeFor(rec, s.records, opts?.asInit),
         strength: !opts?.asInit && rec.strength ? rec.strength : s.form.strength,
         mask: undefined,
         loras: rec.loras ?? [],
@@ -185,14 +163,22 @@ export const useImages = create<ImagesState>()((set, get) => ({
       }
     }))
     useApp.getState().setView('images')
-    set({ viewing: null })
+    // The editor is the big view, so make sure that is what shows.
+    if (startModeFor(rec, get().records, opts?.asInit) === 'edit') useLayout.getState().setHubMode('focus')
+    set({ viewing: null, editJobId: null })
   },
 
   async importPicture(file, name) {
     try {
       const png = await pictureToPng(file)
       const rec = await invoke('images:import', name || (file as File).name || 'Picture', png.data)
-      set((s) => ({ records: [rec, ...s.records.filter((x) => x.id !== rec.id)].sort(byNewest), form: { ...s.form, initImageId: rec.id } }))
+      set((s) => ({
+        records: [rec, ...s.records.filter((x) => x.id !== rec.id)].sort(byNewest),
+        // A mask belongs to the picture it was painted on.
+        form: { ...s.form, initImageId: rec.id, mask: undefined, startMode: 'edit' },
+        editJobId: null
+      }))
+      useLayout.getState().setHubMode('focus')
       return rec
     } catch (e) {
       useApp.getState().toast('error', errorText(e))
@@ -203,6 +189,8 @@ export const useImages = create<ImagesState>()((set, get) => ({
   async generate(req) {
     try {
       const { jobId } = await invoke('images:generate', { ...req, source: 'hub' })
+      // Show the picture being made, big; it turns into the finished picture by itself.
+      set({ focus: `job:${jobId}` })
       return jobId
     } catch (e) {
       useApp.getState().toast('error', errorText(e))
@@ -231,8 +219,16 @@ export const useImages = create<ImagesState>()((set, get) => ({
     void invoke('images:favorite', id, fav)
   },
 
-  openMaskEditor(open) {
-    set({ maskEditorOpen: open })
+  setEditJob(id) {
+    set({ editJobId: id })
+  },
+
+  setMaskFlush(fn) {
+    set({ maskFlush: fn })
+  },
+
+  setFocus(key) {
+    set({ focus: key })
   },
 
   view(id, siblings) {
