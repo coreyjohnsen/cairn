@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import type { IpcInvokeMap, InvokeChannel } from '@shared/ipc'
 import type { Conversation } from '@shared/types'
-import { cleanEnhanced, ENHANCE_SYSTEM } from './agent/enhance'
+import { ENHANCE_SYSTEM, enhancedOrError } from './agent/enhance'
 import { completeText } from './agent/complete'
 import { detectGpus } from './engines/gpu'
 import { civitaiSearch, hfFiles, hfSearch } from './engines/hub'
@@ -139,8 +139,9 @@ export function buildHandlers(s: Services, platform: PlatformApi): Handlers {
       if (!text) return prompt
       const resolved = await s.models.resolve(settings().defaultModel)
       if (!resolved) throw new Error('Choose a chat model first (the one in the composer) so it can rewrite your prompt.')
-      const raw = await completeText(resolved.provider, resolved.option.id, ENHANCE_SYSTEM, text.slice(0, 2000), { maxTokens: 220, temperature: 0.7, timeoutMs: 90_000 })
-      return cleanEnhanced(raw, text)
+      // The rewrite is about 100 tokens, but a model that thinks first spends part of the limit on thinking, so leave room for it.
+      const raw = await completeText(resolved.provider, resolved.option.id, ENHANCE_SYSTEM, text.slice(0, 2000), { maxTokens: 1600, temperature: 0.7, timeoutMs: 120_000 })
+      return enhancedOrError(raw, text)
     },
 
     'tools:list': () => s.tools.entries(s.images.available()).map((e) => e.info),
