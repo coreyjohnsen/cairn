@@ -211,6 +211,8 @@ export interface Compaction {
   createdAt: number
   /** `model` when the model wrote the narrative; `ledger` when only the list of tool calls could be kept. */
   source: 'model' | 'ledger'
+  /** Why the model could not write the narrative, in words, when it could not. */
+  narrativeProblem?: string
   /** How many times the summary has been rolled forward. */
   rounds: number
 }

@@ -30,8 +30,8 @@ import { parseToolArgs, truncateMiddle } from '../util/json'
 import { contextOutputLimit, maxAgentSteps, toolOutputLimit } from '../util/limits'
 import { CodeIndexRegistry } from '../codeindex/index'
 import type { ApprovalManager } from './approvals'
-import { cleanTitle, completeText } from './complete'
-import { MIN_COMPACT_BUDGET, applyCompaction, asksFrom, chooseCut, isContextOverflow, keptFrom, ledgerFrom, mergeLedger, transcriptBlocks, validCompaction, writeNarrative } from './compact'
+import { cleanTitle, completeText, completeTextDetailed } from './complete'
+import { MIN_COMPACT_BUDGET, applyCompaction, summaryReplyTokens, asksFrom, chooseCut, isContextOverflow, keptFrom, ledgerFrom, mergeLedger, transcriptBlocks, validCompaction, writeNarrative } from './compact'
 import { estimateTokens, fitHistory, historyFor, totalTokens } from './context'
 import { detectImageRequest, isExplicitImageCommand } from './intent'
 import { allowsCreateTool, toolsForMode } from './modes'
@@ -673,16 +673,32 @@ export class ChatRunner {
     this.d.emit({ type: 'status', runId: run.runId, conversationId: conv.id, status: 'Summarizing the earlier conversation to free up memory…' })
     const words = Math.max(120, Math.min(380, Math.floor((o.budget * 0.1) / 1.4)))
     const window = resolved.contextTokens ?? Math.max(o.budget + 4000, 8192)
-    const capacity = window - Math.ceil(words * 2.2) - 450 - estimateTokens(prior?.narrative ?? '') - 600
+    // A model that thinks first spends part of its reply on that, so it gets room for it on top of the summary.
+    const replyTokens = summaryReplyTokens(words, o.thinking, window)
+    const capacity = window - replyTokens - 450 - estimateTokens(prior?.narrative ?? '') - 600
     let narrative: string | null = null
+    let problem: string | undefined
+    const ask = (system: string, user: string, maxTokens: number) =>
+      completeTextDetailed(resolved.provider, resolved.option.id, system, user, { maxTokens, temperature: 0.2, signal: o.signal, timeoutMs: 180_000, thinking: o.thinking })
     try {
       narrative = await writeNarrative(
-        (system, user, maxTokens) => completeText(resolved.provider, resolved.option.id, system, user, { maxTokens, temperature: 0.2, signal: o.signal, timeoutMs: 180_000, thinking: o.thinking }),
-        { prior: prior?.narrative ?? '', blocks: transcriptBlocks(range), capacityTokens: capacity, words }
+        async (system, user, maxTokens) => {
+          let r = await ask(system, user, maxTokens)
+          if (!r.text && r.reasoning) {
+            // It thought for the whole reply. Ask once more with the per-message switch that turns thinking off (it needs no restart of the server).
+            r = await ask(system, `${user}\n\n/no_think`, maxTokens)
+            if (!r.text) problem = 'The model used its whole reply thinking and wrote no summary. Set Thinking to Off for this chat, or use a model that does not think.'
+          } else if (!r.text) {
+            problem = r.finishReason === 'length' ? 'The reply was cut off by the token limit before any text.' : 'The model sent an empty reply.'
+          }
+          return r.text
+        },
+        { prior: prior?.narrative ?? '', blocks: transcriptBlocks(range), capacityTokens: capacity, words, replyTokens, onProblem: (why) => (problem ??= why) }
       )
     } catch (e) {
       if (o.signal.aborted || isAbortError(e)) throw e
       narrative = null
+      problem = `The model server answered with an error: ${errMsg(e).slice(0, 220)}`
     } finally {
       this.d.emit({ type: 'status', runId: run.runId, conversationId: conv.id, status: '' })
     }
@@ -698,6 +714,7 @@ export class ChatRunner {
       tokensAfter: 0,
       createdAt: Date.now(),
       source: narrative ? 'model' : 'ledger',
+      narrativeProblem: narrative ? undefined : problem,
       rounds: (prior?.rounds ?? 0) + 1
     }
     next.tokensAfter = totalTokens(applyCompaction(conv.messages, next))
