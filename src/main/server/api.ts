@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import http from 'node:http'
 import net from 'node:net'
 import os from 'node:os'
-import type { ImageGenRequest, ImageRef, ImageTargetOption, LocalModelFile, ServerLogEntry, ServerModelInfo, ServerState, ServerStatus, Settings } from '@shared/types'
+import type { ImageGenRequest, ImageRef, ImageTargetOption, LocalModelFile, LoraFile, LoraSelection, ServerLogEntry, ServerModelInfo, ServerState, ServerStatus, Settings } from '@shared/types'
 import { assignModelIds, isLoopbackHost, normalizeOrigin, parseSize } from '@shared/serverPrefs'
 import { emit } from '../events'
 
@@ -20,6 +20,7 @@ export interface ApiDeps {
   local: { scan(force?: boolean): Promise<LocalModelFile[]> }
   images: {
     builtinTargets(): Promise<ImageTargetOption[]>
+    listLoras(): Promise<LoraFile[]>
     generate(req: ImageGenRequest, hooks: { onProgress(fraction: number): void; signal: AbortSignal }): Promise<ImageRef[]>
   }
   imageStore: { readBytes(id: string): Promise<Uint8Array | null> }
@@ -45,6 +46,7 @@ const PING_MS = 8000
 const IMAGE_URL_TTL_S = 24 * 3600
 const MAX_IMAGES = 4
 const MAX_PROMPT = 8000
+const MAX_LORAS = 8
 const SSE_HEADERS = { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' }
 
 export function generateApiKey(): string {
@@ -372,6 +374,10 @@ export class ApiServer {
       if (this.active > MAX_ACTIVE) throw new ApiError(429, 'too_many_requests', 'Too many requests are running at once. Try again in a moment.')
       return this.proxyCompletion(req, res, ctx, path)
     }
+    if (path === '/v1/loras') {
+      if (req.method !== 'GET') throw new ApiError(405, 'method_not_allowed', 'Use GET.')
+      return this.listLoras(res)
+    }
     if (path === '/v1/images/generations') {
       if (req.method !== 'POST') throw new ApiError(405, 'method_not_allowed', 'Use POST.')
       if (this.active > MAX_ACTIVE) throw new ApiError(429, 'too_many_requests', 'Too many requests are running at once. Try again in a moment.')
@@ -477,6 +483,44 @@ export class ApiServer {
       return this.json(res, 200, row(m))
     }
     this.json(res, 200, { object: 'list', data: all.map(row) })
+  }
+
+  /** The LoRA files that can be named in a picture request (built-in image engine only). */
+  private async listLoras(res: http.ServerResponse): Promise<void> {
+    const loras = await this.d.images.listLoras()
+    this.json(res, 200, {
+      object: 'list',
+      data: loras.map((l) => ({ id: l.id, object: 'lora', name: l.name, base: l.base ?? null, triggers: l.triggers }))
+    })
+  }
+
+  /**
+   * Reads the `loras` field of a picture request: a list of `{ id, strength?, trigger? }` (or just the id as a string).
+   * The id is matched to a file in the LoRA folder, ignoring case, so a bad name is refused before anything is drawn.
+   */
+  private async parseLoras(raw: unknown): Promise<LoraSelection[] | undefined> {
+    if (raw === undefined || raw === null) return undefined
+    if (!Array.isArray(raw)) throw new ApiError(400, 'invalid_loras', '"loras" must be a list such as [{"id": "my-style", "strength": 0.8}].')
+    if (!raw.length) return undefined
+    if (raw.length > MAX_LORAS) throw new ApiError(400, 'invalid_loras', `At most ${MAX_LORAS} LoRAs can be used in one request.`)
+    const known = await this.d.images.listLoras()
+    const out: LoraSelection[] = []
+    for (const item of raw) {
+      const entry = typeof item === 'string' ? { id: item } : isRecord(item) ? item : null
+      const want = entry && typeof entry.id === 'string' ? entry.id.trim() : ''
+      if (!entry || !want) throw new ApiError(400, 'invalid_loras', 'Each LoRA needs an "id", the name shown by GET /v1/loras.')
+      const lower = want.toLowerCase()
+      const file = known.find((l) => l.id === want) ?? known.find((l) => l.id.toLowerCase() === lower)
+      if (!file) {
+        const have = known.length ? ` Available: ${known.map((l) => l.id).join(', ')}.` : ' There are no LoRAs in the LoRA folder.'
+        throw new ApiError(400, 'lora_not_found', `The LoRA "${want}" was not found.${have}`)
+      }
+      if (out.some((l) => l.id === file.id)) throw new ApiError(400, 'invalid_loras', `The LoRA "${file.id}" is listed twice.`)
+      const strength = typeof entry.strength === 'number' && Number.isFinite(entry.strength) ? clamp(entry.strength, -2, 2) : 1
+      const trigger = typeof entry.trigger === 'string' && entry.trigger.trim() ? entry.trigger.trim().slice(0, 300) : undefined
+      out.push({ id: file.id, strength, ...(trigger ? { trigger } : {}) })
+    }
+    return out
   }
 
   private async proxyCompletion(req: http.IncomingMessage, res: http.ServerResponse, ctx: Ctx, path: string): Promise<void> {
@@ -621,6 +665,7 @@ export class ApiServer {
     const steps = num(body.steps)
     const cfg = num(body.cfg_scale) ?? num(body.guidance_scale)
     const seed = typeof body.seed === 'number' && Number.isInteger(body.seed) ? body.seed : -1
+    const loras = await this.parseLoras(body.loras)
     const gen: ImageGenRequest = {
       prompt,
       negativePrompt: typeof body.negative_prompt === 'string' ? body.negative_prompt.slice(0, MAX_PROMPT) : undefined,
@@ -632,6 +677,7 @@ export class ApiServer {
       seed,
       sampler: typeof body.sampler === 'string' && body.sampler.trim() ? body.sampler.trim().slice(0, 40) : undefined,
       count: n,
+      ...(loras ? { loras } : {}),
       source: 'hub'
     }
     const ac = this.abortOnClose(res)

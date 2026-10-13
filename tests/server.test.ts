@@ -322,6 +322,10 @@ describe('API server', () => {
       local: { scan: async () => files },
       images: {
         builtinTargets: async () => [target('sdxl-1', 'SDXL Turbo'), target('flux-1', 'FLUX', false)],
+        listLoras: async () => [
+          { id: 'styles/Ink-Wash', name: 'Ink Wash', path: '/m/image/lora/styles/Ink-Wash.safetensors', sizeBytes: 1, base: 'sdxl', triggers: ['inkwash'] },
+          { id: 'detail', name: 'detail', path: '/m/image/lora/detail.safetensors', sizeBytes: 1, triggers: [] }
+        ],
         async generate(req) {
           generated.push(req)
           if (req.prompt === 'explode') throw new Error('out of memory')
@@ -695,6 +699,49 @@ describe('API server', () => {
       expect((await err({ prompt: 'x', model: 'nope' })).error.code).toBe('model_not_found')
       expect((await err({ prompt: 'x', model: 'FLUX' })).error).toMatchObject({ code: 'model_unavailable', message: 'The model file is missing.' })
       expect((await err({ prompt: 'x', model: 'Qwen-Coder' })).error.code).toBe('model_not_found') // a chat model is not a picture model
+      expect(generated).toHaveLength(0)
+    })
+
+    it('lists the LoRAs that can be used, without file paths', async () => {
+      await start()
+      const r = await fetch(url('/v1/loras'), { headers: auth() })
+      expect(r.status).toBe(200)
+      expect(await r.json()).toEqual({
+        object: 'list',
+        data: [
+          { id: 'styles/Ink-Wash', object: 'lora', name: 'Ink Wash', base: 'sdxl', triggers: ['inkwash'] },
+          { id: 'detail', object: 'lora', name: 'detail', base: null, triggers: [] }
+        ]
+      })
+      expect((await fetch(url('/v1/loras'), { method: 'POST', headers: auth(), body: '{}' })).status).toBe(405)
+    })
+
+    it('passes LoRAs on to the image engine, matching names ignoring case and cleaning strengths', async () => {
+      await start()
+      const r = await post('/v1/images/generations', {
+        prompt: 'a fox',
+        loras: [{ id: 'styles/ink-wash', strength: 0.8, trigger: ' inkwash ' }, { id: 'detail', strength: 9 }, ]
+      })
+      expect(r.status).toBe(200)
+      expect(generated[0].loras).toEqual([
+        { id: 'styles/Ink-Wash', strength: 0.8, trigger: 'inkwash' },
+        { id: 'detail', strength: 2 }
+      ])
+      await post('/v1/images/generations', { prompt: 'a fox', loras: ['detail'] })
+      expect(generated[1].loras).toEqual([{ id: 'detail', strength: 1 }])
+      await post('/v1/images/generations', { prompt: 'a fox', loras: [] })
+      expect(generated[2].loras).toBeUndefined()
+    })
+
+    it('refuses unknown, repeated or malformed LoRAs before drawing', async () => {
+      await start()
+      const err = async (loras: unknown) => (await post('/v1/images/generations', { prompt: 'x', loras })).json()
+      expect((await err([{ id: 'nope' }])).error).toMatchObject({ code: 'lora_not_found' })
+      expect((await err([{ id: 'nope' }])).error.message).toMatch(/Available: styles\/Ink-Wash, detail/)
+      expect((await err('detail')).error.code).toBe('invalid_loras')
+      expect((await err([{ strength: 1 }])).error.code).toBe('invalid_loras')
+      expect((await err(['detail', 'DETAIL'])).error.code).toBe('invalid_loras')
+      expect((await err(Array.from({ length: 9 }, () => 'detail'))).error.code).toBe('invalid_loras')
       expect(generated).toHaveLength(0)
     })
 
