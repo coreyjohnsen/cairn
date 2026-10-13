@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import http from 'node:http'
 import net from 'node:net'
 import os from 'node:os'
-import type { ImageGenRequest, ImageRef, ImageTargetOption, LocalModelFile, LoraFile, LoraSelection, ServerLogEntry, ServerModelInfo, ServerState, ServerStatus, Settings } from '@shared/types'
+import type { ImageGenRequest, ImageRef, ImageTargetOption, LocalModelFile, LoraFile, LoraSelection, UpscaleChoice, UpscalerFile, ServerLogEntry, ServerModelInfo, ServerState, ServerStatus, Settings } from '@shared/types'
 import { assignModelIds, isLoopbackHost, normalizeOrigin, parseSize } from '@shared/serverPrefs'
 import { emit } from '../events'
 
@@ -21,6 +21,7 @@ export interface ApiDeps {
   images: {
     builtinTargets(): Promise<ImageTargetOption[]>
     listLoras(): Promise<LoraFile[]>
+    listUpscalers(): Promise<UpscalerFile[]>
     generate(req: ImageGenRequest, hooks: { onProgress(fraction: number): void; signal: AbortSignal }): Promise<ImageRef[]>
   }
   imageStore: { readBytes(id: string): Promise<Uint8Array | null> }
@@ -47,6 +48,7 @@ const IMAGE_URL_TTL_S = 24 * 3600
 const MAX_IMAGES = 4
 const MAX_PROMPT = 8000
 const MAX_LORAS = 8
+const MAX_UPSCALE_REPEATS = 3
 const SSE_HEADERS = { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' }
 
 export function generateApiKey(): string {
@@ -378,6 +380,10 @@ export class ApiServer {
       if (req.method !== 'GET') throw new ApiError(405, 'method_not_allowed', 'Use GET.')
       return this.listLoras(res)
     }
+    if (path === '/v1/upscalers') {
+      if (req.method !== 'GET') throw new ApiError(405, 'method_not_allowed', 'Use GET.')
+      return this.listUpscalers(res)
+    }
     if (path === '/v1/images/generations') {
       if (req.method !== 'POST') throw new ApiError(405, 'method_not_allowed', 'Use POST.')
       if (this.active > MAX_ACTIVE) throw new ApiError(429, 'too_many_requests', 'Too many requests are running at once. Try again in a moment.')
@@ -492,6 +498,35 @@ export class ApiServer {
       object: 'list',
       data: loras.map((l) => ({ id: l.id, object: 'lora', name: l.name, base: l.base ?? null, triggers: l.triggers }))
     })
+  }
+
+  /** The upscalers that can be named in a picture request. */
+  private async listUpscalers(res: http.ServerResponse): Promise<void> {
+    const ups = await this.d.images.listUpscalers()
+    this.json(res, 200, {
+      object: 'list',
+      data: ups.map((u) => ({ id: u.name, object: 'upscaler', scale: u.scale, style: u.style, engine: u.engine === 'esrgan' ? 'real-esrgan' : 'built-in' }))
+    })
+  }
+
+  /**
+   * Reads the `upscale` field of a picture request: `{ id, repeats? }` (or just the id as a string), where the id is a name
+   * from GET /v1/upscalers. Returns the choice the image engine expects, or undefined when no upscaling was asked for.
+   */
+  private async parseUpscale(raw: unknown): Promise<UpscaleChoice | undefined> {
+    if (raw === undefined || raw === null || raw === false) return undefined
+    const entry = typeof raw === 'string' ? { id: raw } : isRecord(raw) ? raw : null
+    const want = entry && typeof entry.id === 'string' ? entry.id.trim() : ''
+    if (!entry || !want) throw new ApiError(400, 'invalid_upscale', '"upscale" must be {"id": "<name from GET /v1/upscalers>", "repeats": 1}.')
+    const known = await this.d.images.listUpscalers()
+    const lower = want.toLowerCase()
+    const file = known.find((u) => u.name === want) ?? known.find((u) => u.name.toLowerCase() === lower)
+    if (!file) {
+      const have = known.length ? ` Available: ${known.map((u) => u.name).join(', ')}.` : ' No upscalers are installed (Models → Image models → LoRAs and upscalers).'
+      throw new ApiError(400, 'upscaler_not_found', `The upscaler "${want}" was not found.${have}`)
+    }
+    const repeats = typeof entry.repeats === 'number' && Number.isFinite(entry.repeats) ? clamp(Math.round(entry.repeats), 1, MAX_UPSCALE_REPEATS) : 1
+    return { path: file.path, repeats }
   }
 
   /**
@@ -666,6 +701,7 @@ export class ApiServer {
     const cfg = num(body.cfg_scale) ?? num(body.guidance_scale)
     const seed = typeof body.seed === 'number' && Number.isInteger(body.seed) ? body.seed : -1
     const loras = await this.parseLoras(body.loras)
+    const upscale = await this.parseUpscale(body.upscale)
     const gen: ImageGenRequest = {
       prompt,
       negativePrompt: typeof body.negative_prompt === 'string' ? body.negative_prompt.slice(0, MAX_PROMPT) : undefined,
@@ -678,6 +714,7 @@ export class ApiServer {
       sampler: typeof body.sampler === 'string' && body.sampler.trim() ? body.sampler.trim().slice(0, 40) : undefined,
       count: n,
       ...(loras ? { loras } : {}),
+      ...(upscale ? { upscale } : {}),
       source: 'hub'
     }
     const ac = this.abortOnClose(res)

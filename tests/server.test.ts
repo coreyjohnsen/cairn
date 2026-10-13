@@ -322,6 +322,10 @@ describe('API server', () => {
       local: { scan: async () => files },
       images: {
         builtinTargets: async () => [target('sdxl-1', 'SDXL Turbo'), target('flux-1', 'FLUX', false)],
+        listUpscalers: async () => [
+          { name: 'RealESRGAN_x4plus', path: '/m/image/upscale/RealESRGAN_x4plus.param', sizeBytes: 1, scale: 4, engine: 'esrgan', style: 'general' },
+          { name: 'RealESRGAN_x4plus_anime_6B', path: '/m/image/upscale/RealESRGAN_x4plus_anime_6B.pth', sizeBytes: 1, scale: 4, engine: 'sd', style: 'anime' }
+        ],
         listLoras: async () => [
           { id: 'styles/Ink-Wash', name: 'Ink Wash', path: '/m/image/lora/styles/Ink-Wash.safetensors', sizeBytes: 1, base: 'sdxl', triggers: ['inkwash'] },
           { id: 'detail', name: 'detail', path: '/m/image/lora/detail.safetensors', sizeBytes: 1, triggers: [] }
@@ -742,6 +746,42 @@ describe('API server', () => {
       expect((await err([{ strength: 1 }])).error.code).toBe('invalid_loras')
       expect((await err(['detail', 'DETAIL'])).error.code).toBe('invalid_loras')
       expect((await err(Array.from({ length: 9 }, () => 'detail'))).error.code).toBe('invalid_loras')
+      expect(generated).toHaveLength(0)
+    })
+
+    it('lists the upscalers that can be used, without file paths', async () => {
+      await start()
+      const r = await fetch(url('/v1/upscalers'), { headers: auth() })
+      expect(r.status).toBe(200)
+      expect(await r.json()).toEqual({
+        object: 'list',
+        data: [
+          { id: 'RealESRGAN_x4plus', object: 'upscaler', scale: 4, style: 'general', engine: 'real-esrgan' },
+          { id: 'RealESRGAN_x4plus_anime_6B', object: 'upscaler', scale: 4, style: 'anime', engine: 'built-in' }
+        ]
+      })
+      expect((await fetch(url('/v1/upscalers'), { method: 'POST', headers: auth(), body: '{}' })).status).toBe(405)
+    })
+
+    it('passes an upscaler on to the image engine, matching the name ignoring case and keeping repeats between 1 and 3', async () => {
+      await start()
+      await post('/v1/images/generations', { prompt: 'a fox', upscale: { id: 'realesrgan_x4plus', repeats: 2 } })
+      expect(generated[0].upscale).toEqual({ path: '/m/image/upscale/RealESRGAN_x4plus.param', repeats: 2 })
+      await post('/v1/images/generations', { prompt: 'a fox', upscale: 'RealESRGAN_x4plus_anime_6B' })
+      expect(generated[1].upscale).toEqual({ path: '/m/image/upscale/RealESRGAN_x4plus_anime_6B.pth', repeats: 1 })
+      await post('/v1/images/generations', { prompt: 'a fox', upscale: { id: 'RealESRGAN_x4plus', repeats: 99 } })
+      expect(generated[2].upscale?.repeats).toBe(3)
+      await post('/v1/images/generations', { prompt: 'a fox', upscale: null })
+      expect(generated[3].upscale).toBeUndefined()
+    })
+
+    it('refuses an unknown or malformed upscaler before drawing', async () => {
+      await start()
+      const err = async (upscale: unknown) => (await post('/v1/images/generations', { prompt: 'x', upscale })).json()
+      expect((await err({ id: 'nope' })).error).toMatchObject({ code: 'upscaler_not_found' })
+      expect((await err('nope')).error.message).toMatch(/Available: RealESRGAN_x4plus, RealESRGAN_x4plus_anime_6B/)
+      expect((await err({ repeats: 2 })).error.code).toBe('invalid_upscale')
+      expect((await err(4)).error.code).toBe('invalid_upscale')
       expect(generated).toHaveLength(0)
     })
 
